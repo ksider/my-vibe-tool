@@ -8,6 +8,11 @@ const statusMessage = document.getElementById('status-message');
 const resultsList = document.getElementById('results-list');
 let country = new URLSearchParams(window.location.search).get('country') === 'netherlands' ? 'netherlands' : 'uk';
 
+const recentSearchesPanel = document.getElementById('recent-searches');
+const recentList = document.getElementById('recent-list');
+const HISTORY_KEY = 'sponsorSearchHistory';
+const HISTORY_LIMIT = 3;
+
 function updateCountryUI() {
   countryButtons.forEach(button => {
     const active = button.dataset.country === country;
@@ -58,6 +63,9 @@ async function search(countryValue, query) {
     renderResults({ query: '', total: 0, matches: [], error: 'Please enter a company name.' });
     return;
   }
+  saveToHistory(countryValue, query);            // ← добавить
+  recentSearchesPanel?.classList.add('hidden');   // ← добавить (скрыть список при активном поиске)
+
   statusMessage.textContent = 'Loading register...';
   statusMessage.className = 'status-message';
   resultsPanel.classList.remove('hidden');
@@ -88,4 +96,56 @@ form.addEventListener('submit', event => {
 updateCountryUI();
 const initialQuery = new URLSearchParams(window.location.search).get('q') || '';
 queryInput.value = initialQuery;
-if (initialQuery) search(country, initialQuery);
+// if (initialQuery) search(country, initialQuery);
+if (initialQuery) {
+  search(country, initialQuery);
+} else {
+  renderHistory();   // ← добавить: показать историю только на «чистой» стартовой странице
+}
+
+function loadHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveToHistory(countryValue, query) {
+  const trimmed = query.trim();
+  if (!trimmed) return;
+  const entries = loadHistory().filter(e => !(e.query === trimmed && e.country === countryValue));
+  entries.unshift({ query: trimmed, country: countryValue });
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(0, HISTORY_LIMIT)));
+  } catch {
+    // приватный режим / квота исчерпана — просто не сохраняем
+  }
+}
+
+function renderHistory() {
+  const entries = loadHistory();
+  if (!recentSearchesPanel || !recentList || !entries.length) {
+    recentSearchesPanel?.classList.add('hidden');
+    return;
+  }
+  recentList.replaceChildren();
+  entries.forEach(entry => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'recent-item';
+    btn.textContent = `${entry.query} · ${entry.country === 'netherlands' ? 'NL' : 'UK'}`;
+    btn.addEventListener('click', () => {
+      country = entry.country;
+      queryInput.value = entry.query;
+      updateCountryUI();
+      const url = new URL(window.location.href);
+      url.searchParams.set('country', entry.country);
+      url.searchParams.set('q', entry.query);
+      history.pushState({}, '', url);
+      search(country, entry.query);
+    });
+    recentList.appendChild(btn);
+  });
+  recentSearchesPanel.classList.remove('hidden');
+}
