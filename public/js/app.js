@@ -11,7 +11,7 @@ let country = new URLSearchParams(window.location.search).get('country') === 'ne
 const recentSearchesPanel = document.getElementById('recent-searches');
 const recentList = document.getElementById('recent-list');
 const HISTORY_KEY = 'sponsorSearchHistory';
-const HISTORY_LIMIT = 3;
+const HISTORY_LIMIT = 10;
 
 function updateCountryUI() {
   countryButtons.forEach(button => {
