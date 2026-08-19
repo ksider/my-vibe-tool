@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sponsor search | Multitool</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <nav class="tool-nav" aria-label="Multitool">
+    <a href="/">Multitool</a><a href="/search/" aria-current="page">Search</a><a href="/qr/">QR</a><a href="/pdf/">PDF</a><a href="/badge/">Badge</a><a href="/ftir/">FTIR</a>
+  </nav>
+  <div class="shell">
+    <header class="shell-header">
+      <div>
+        <p class="eyebrow">REGISTERS</p>
+        <h1>Licensed sponsor search</h1>
+      </div>
+      <p class="panel-note">Search the UK and Netherlands public registers.</p>
+    </header>
+    <main>
+      <section id="search-panel" class="tool-panel" role="search">
+        <form id="search-form" class="search-form">
+          <div class="country-switcher" role="group" aria-label="Country">
+            <button type="button" class="country-option is-active" data-country="uk" aria-pressed="true">UK</button>
+            <button type="button" class="country-option" data-country="netherlands" aria-pressed="false">Netherlands</button>
+          </div>
+          <input id="query" type="search" placeholder="Company name" autocomplete="off">
+          <button class="primary-btn" type="submit">Search</button>
+        </form>
+        <section id="results" class="results hidden" aria-live="polite">
+          <div class="results-heading"><h2 id="results-title">Search results</h2><span id="results-meta">0 matches</span></div>
+          <p id="status-message" class="status-message"></p>
+          <div id="results-list" class="results-list"></div>
+        </section>
+      </section>
+    </main>
+  </div>
+  <script src="/js/app.js"></script>
+</body>
+</html>
