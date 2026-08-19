@@ -1,6 +1,6 @@
 # Multitool
 
-One Express application for sponsor search, QR generation and server-side PDF/DOCX merging.
+All my vibe tools in one app.
 
 ## Run locally
 
