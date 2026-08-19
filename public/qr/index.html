@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Генератор QR</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      /* Inline custom color picker (only for index.html) */
+      .cpk{position:relative; display:inline-flex; align-items:center; gap:8px}
+      .cpk-swatch{width:40px; height:32px; border-radius:8px; border:1px solid var(--border,#1e2631); cursor:pointer; box-shadow: inset 0 0 0 1px rgba(255,255,255,.04)}
+      .cpk-pop{position:absolute; top:100%; left:0; margin-top:8px; z-index:60; background:var(--panel,#12161c); border:1px solid var(--border,#1e2631); border-radius:12px; padding:12px; box-shadow:0 8px 32px rgba(0,0,0,.4)}
+      .cpk-hidden{display:none}
+      .cpk-sv{position:relative; width:220px; height:150px; border-radius:8px; overflow:hidden; border:1px solid var(--border,#1e2631); cursor:crosshair}
+      .cpk-sv::before{content:""; position:absolute; inset:0; background:linear-gradient(to top, rgba(0,0,0,1), rgba(0,0,0,0))}
+      .cpk-sv::after{content:""; position:absolute; inset:0; background:linear-gradient(to right, rgba(255,255,255,1), rgba(255,255,255,0))}
+      .cpk-dot{position:absolute; width:14px; height:14px; border-radius:50%; background:#fff; border:2px solid #000; box-shadow:0 1px 2px rgba(0,0,0,.6); transform:translate(-50%, -50%)}
+      .cpk-hue{position:relative; width:220px; height:14px; border-radius:999px; margin-top:10px; border:1px solid var(--border,#1e2631); cursor:pointer; background:linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%)}
+      .cpk-thumb{position:absolute; top:50%; width:14px; height:14px; border-radius:50%; background:#fff; border:2px solid #000; transform:translate(-50%,-50%); box-shadow:0 1px 2px rgba(0,0,0,.6)}
+      .cpk-row{display:flex; gap:10px; align-items:center; justify-content:space-between; margin-top:10px; color:var(--muted,#9fb0c3); font-size:12px}
+      .cpk-row input.cpk-hex, .cpk-row input.cpk-in{background:#0e1218; color:var(--text,#e8eef5); border:1px solid var(--border,#1e2631); border-radius:6px; padding:6px 8px; font-size:12px}
+      .cpk-row input.cpk-hex{width:110px; text-transform:uppercase}
+      .cpk-row .cpk-r, .cpk-row .cpk-g, .cpk-row .cpk-b{width:60px; text-align:center}
+    </style>
+  </head>
+  <body>
+    <nav class="tool-nav" aria-label="Multitool">
+      <a href="/">Multitool</a><a href="/search/">Search</a><a href="/qr/" aria-current="page">QR</a><a href="/pdf/">PDF</a><a href="/badge/">Badge</a><a href="/ftir/">FTIR</a>
+    </nav>
+    <header class="app-header">
+      <div class="header-left">
+        <h1 data-i18n-key="appTitle">Генератор QR-кодов</h1>
+        <p class="sub" data-i18n-key="appSubtitle">Настройте внешний вид QR-кода</p>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="btnCopyLink" class="icon-btn copy-link-btn" aria-label="Скопировать ссылку" data-i18n-key="btnCopyLink" data-i18n-target="aria-label">
+          <svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24">
+            <path d="M8.464 15.536a5 5 0 0 1 0-7.072l3.182-3.182a5 5 0 1 1 7.071 7.07l-.353.354a1 1 0 0 1-1.414-1.414l.353-.353a3 3 0 1 0-4.243-4.243l-3.182 3.182a3 3 0 0 0 4.243 4.243 1 1 0 1 1 1.414 1.414 5 5 0 0 1-7.071 0Zm9.192-3.465a5 5 0 0 1 0 7.071l-3.182 3.183a5 5 0 0 1-7.07-7.071l.353-.353a1 1 0 0 1 1.414 1.414l-.354.353a3 3 0 0 0 4.244 4.244l3.182-3.182a3 3 0 0 0-4.243-4.244 1 1 0 0 1-1.414-1.414 5 5 0 0 1 7.07 0Z" fill="currentColor"/>
+          </svg>
+        </button>
+        <button type="button" id="btnResetDefaults" class="icon-btn reset-btn" aria-label="Сбросить настройки" data-i18n-key="btnReset" data-i18n-target="aria-label">
+          <svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24">
+            <path d="M12 5V2L7 6l5 4V7c3.309 0 6 2.691 6 6a6 6 0 0 1-6 6 5.99 5.99 0 0 1-5.197-3H4.697A8.004 8.004 0 0 0 12 21c4.411 0 8-3.589 8-8s-3.589-8-8-8Z" fill="currentColor"/>
+          </svg>
+        </button>
+        <div class="lang-switch" role="group" aria-label="Language selector" data-i18n-key="langSwitcherAria" data-i18n-target="aria-label">
+          <button type="button" class="lang-btn is-active" data-lang="ru">RU</button>
+          <button type="button" class="lang-btn" data-lang="en">EN</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="controls">
+        <div class="control-group">
+          <h2 data-i18n-key="sectionContent">Содержимое</h2>
+          <div class="field">
+            <label for="text" data-i18n-key="textLabel">Текст или URL</label>
+            <textarea id="text" rows="3" data-i18n-key="textPlaceholder" data-i18n-target="placeholder" placeholder="Введите текст, ссылку или любые данные"></textarea>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <h2 data-i18n-key="sectionSizing">Размер и точность</h2>
+          <div class="row">
+            <div class="field">
+              <label for="ecc" data-i18n-key="eccLabel">Коррекция ошибок</label>
+              <select id="ecc">
+                <option value="L" data-i18n-key="eccL">L (наименьшая, больше данных)</option>
+                <option value="M" data-i18n-key="eccM">M</option>
+                <option value="Q" data-i18n-key="eccQ">Q</option>
+                <option value="H" data-i18n-key="eccH" selected>H (наибольшая, устойчивее с логотипом)</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="size"><span data-i18n-key="sizeLabel">Размер (пикс.)</span> <span id="sizeVal">1024</span></label>
+              <input type="range" id="size" min="320" max="2048" step="16" value="1024" />
+            </div>
+
+            <div class="field">
+              <label for="margin"><span data-i18n-key="marginLabel">Отступ (модули)</span> <span id="marginVal">2</span></label>
+              <input type="range" id="margin" min="0" max="16" step="1" value="2" />
+            </div>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <h2 data-i18n-key="sectionModules">Модули и цвета</h2>
+          <div class="row">
+            <div class="field">
+              <label for="fg" data-i18n-key="fgLabel">Цвет QR</label>
+              <input type="color" id="fg" value="#1B2923" />
+              <div class="cpk" data-for="fg">
+                <div class="cpk-swatch" aria-label="Выбор цвета" data-i18n-key="colorPickerAria" data-i18n-target="aria-label"></div>
+                <div class="cpk-pop cpk-hidden">
+                  <div class="cpk-sv"><div class="cpk-dot"></div></div>
+                  <div class="cpk-hue"><div class="cpk-thumb" style="left:0%"></div></div>
+                  <div class="cpk-row"><span>HEX</span><input class="cpk-hex" value="#1B2923" maxlength="9" /></div>
+                  <div class="cpk-row"><span>RGB</span><span>
+                    <input class="cpk-in cpk-r" type="number" min="0" max="255" step="1" />
+                    <input class="cpk-in cpk-g" type="number" min="0" max="255" step="1" />
+                    <input class="cpk-in cpk-b" type="number" min="0" max="255" step="1" />
+                  </span></div>
+                </div>
+              </div>
+            </div>
+            <div class="field">
+              <label for="bg" data-i18n-key="bgLabel">Фон</label>
+              <input type="color" id="bg" value="#ffffff" />
+              <div class="cpk" data-for="bg">
+                <div class="cpk-swatch" aria-label="Выбор цвета" data-i18n-key="colorPickerAria" data-i18n-target="aria-label"></div>
+                <div class="cpk-pop cpk-hidden">
+                  <div class="cpk-sv"><div class="cpk-dot"></div></div>
+                  <div class="cpk-hue"><div class="cpk-thumb" style="left:0%"></div></div>
+                  <div class="cpk-row"><span>HEX</span><input class="cpk-hex" value="#ffffff" maxlength="9" /></div>
+                  <div class="cpk-row"><span>RGB</span><span>
+                    <input class="cpk-in cpk-r" type="number" min="0" max="24" step="1" />
+                    <input class="cpk-in cpk-g" type="number" min="0" max="41" step="1" />
+                    <input class="cpk-in cpk-b" type="number" min="0" max="35" step="1" />
+                  </span></div>
+                </div>
+              </div>
+            </div>
+            <div class="field">
+              <label for="quiet" data-i18n-key="modulesShapeLabel">Форма модулей</label>
+              <select id="quiet">
+                <option value="square" data-i18n-key="modulesSquare" selected>Классические</option>
+                <option value="rounded" data-i18n-key="modulesRounded">Скруглённые</option>
+                <option value="dots" data-i18n-key="modulesDots">Круглые точки</option>
+                <option value="classy" data-i18n-key="modulesClassy">Classy</option>
+                <option value="classy-rounded" data-i18n-key="modulesClassyRounded">Classy округлённые</option>
+                <option value="extra-rounded" data-i18n-key="modulesExtraRounded">Максимальное скругление</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <h2 data-i18n-key="sectionCorners">Углы</h2>
+          <div class="row corner-layout">
+            <div class="field-stack">
+              <div class="field">
+                <label for="cornerSquare" data-i18n-key="cornerSquareLabel">Узоры углов (наружные)</label>
+                <select id="cornerSquare">
+                  <option value="square" data-i18n-key="cornerSquareClassic" selected>Классические</option>
+                  <option value="extra-rounded" data-i18n-key="cornerSquareRounded">Скруглённые</option>
+                  <option value="dot" data-i18n-key="cornerSquareDot">Точки</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="cornerDot" data-i18n-key="cornerDotLabel">Узоры углов (внутренние)</label>
+                <select id="cornerDot">
+                  <option value="dot" data-i18n-key="cornerDotDot" selected>Точка</option>
+                  <option value="square" data-i18n-key="cornerDotSquare">Квадрат</option>
+                  <option value="none" data-i18n-key="cornerDotNone">Без оформления</option>
+                </select>
+              </div>
+            </div>
+            <div class="field-stack">
+              <div class="field">
+                <label for="cornerSquareColor" data-i18n-key="cornerSquareColorLabel">Цвет углов (наружные)</label>
+                <input type="color" id="cornerSquareColor" value="#1B2923" />
+              </div>
+              <div class="field">
+                <label for="cornerDotColor" data-i18n-key="cornerDotColorLabel">Цвет углов (внутренние)</label>
+                <input type="color" id="cornerDotColor" value="#1B2923" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <h2 data-i18n-key="sectionLogo">Логотип</h2>
+          <div class="row">
+            <div class="field">
+              <label for="logo" data-i18n-key="logoLabel">Логотип (PNG/JPG/SVG)</label>
+              <input type="file" id="logo" accept="image/*" />
+            </div>
+            <div class="field">
+              <label for="logoSize"><span data-i18n-key="logoSizeLabel">Размер логотипа (%)</span> <span id="logoSizeVal">55</span></label>
+              <input type="range" id="logoSize" min="5" max="95" step="1" value="55" />
+            </div>
+            <div class="field">
+              <label for="logoPad"><span data-i18n-key="logoPaddingLabel">Отступ изображения (пикс.)</span> <span id="logoPadVal">8</span></label>
+              <input type="range" id="logoPad" min="0" max="48" step="1" value="8" />
+            </div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="btnGenerate" data-i18n-key="btnGenerate">Сгенерировать</button>
+          <button id="btnDownload" class="secondary" data-i18n-key="btnDownloadPng">Скачать PNG</button>
+          <button id="btnDownloadSvg" class="secondary" data-i18n-key="btnDownloadSvg">Скачать SVG</button>
+          <button id="btnClearLogo" class="link" data-i18n-key="btnClearLogo">Очистить логотип</button>
+        </div>
+      </section>
+
+      <section class="preview">
+        <div id="canvas" aria-label="Предпросмотр QR" data-i18n-key="previewAria" data-i18n-target="aria-label" role="img"></div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <span></span>
+    </footer>
+
+    <script src="vendor/qr-code-styling.js"></script>
+    
+    <script src="app.js"></script>
+    <script>
+      // Lightweight custom color picker that syncs with hidden native inputs
+      (function(){
+        function clamp(n,min,max){ return Math.max(min, Math.min(max,n)); }
+        function hsvToRgb(h,s,v){
+          h = (h%360+360)%360; s = clamp(s,0,1); v = clamp(v,0,1);
+          const c = v * s; const x = c * (1 - Math.abs((h/60)%2 - 1)); const m = v - c;
+          let r=0,g=0,b=0; const i = Math.floor(h/60);
+          switch(i){
+            case 0: r=c; g=x; b=0; break; case 1: r=x; g=c; b=0; break; case 2: r=0; g=c; b=x; break;
+            case 3: r=0; g=x; b=c; break; case 4: r=x; g=0; b=c; break; default: r=c; g=0; b=x; break;
+          }
+          return { r: Math.round((r+m)*255), g: Math.round((g+m)*255), b: Math.round((b+m)*255) };
+        }
+        function rgbToHsv(r,g,b){
+          r/=255; g/=255; b/=255; const max=Math.max(r,g,b), min=Math.min(r,g,b); const d=max-min;
+          let h=0; if(d===0) h=0; else if(max===r) h=60*(((g-b)/d)%6); else if(max===g) h=60*(((b-r)/d)+2); else h=60*(((r-g)/d)+4);
+          if (h<0) h+=360; const s = max===0 ? 0 : d/max; const v=max; return {h,s,v};
+        }
+        function toHex(n){ return n.toString(16).padStart(2,'0'); }
+        function rgbToHex(r,g,b){ return '#'+toHex(r)+toHex(g)+toHex(b); }
+        function hexToRgb(hex){
+          const m6 = /^#?([0-9a-f]{6})$/i.exec(hex||'');
+          const m3 = /^#?([0-9a-f]{3})$/i.exec(hex||'');
+          if (m6){ const int = parseInt(m6[1],16); return { r:(int>>16)&255, g:(int>>8)&255, b:int&255 }; }
+          if (m3){ const s=m3[1]; const r=parseInt(s[0]+s[0],16), g=parseInt(s[1]+s[1],16), b=parseInt(s[2]+s[2],16); return {r,g,b}; }
+          return {r:0,g:0,b:0};
+        }
+        function parseColorText(t){
+          if (!t) return null; const s=t.trim();
+          if (/^#?[0-9a-f]{3}$/i.test(s) || /^#?[0-9a-f]{6}$/i.test(s)){ const rgb=hexToRgb(s); return rgb; }
+          let m = /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i.exec(s);
+          if (!m) m = /^(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})$/i.exec(s);
+          if (m){ const r=clamp(parseInt(m[1],10),0,255), g=clamp(parseInt(m[2],10),0,255), b=clamp(parseInt(m[3],10),0,255); return {r,g,b}; }
+          return null;
+        }
+
+        function attachPicker(forId){
+          const input = document.getElementById(forId);
+          const wrapper = document.querySelector('.cpk[data-for="'+forId+'"]');
+          if(!input || !wrapper) return;
+          input.style.display = 'none';
+          const swatch = wrapper.querySelector('.cpk-swatch');
+          const pop = wrapper.querySelector('.cpk-pop');
+          const sv = wrapper.querySelector('.cpk-sv');
+          const dot = wrapper.querySelector('.cpk-dot');
+          const hue = wrapper.querySelector('.cpk-hue');
+          const thumb = wrapper.querySelector('.cpk-thumb');
+          const hexInput = wrapper.querySelector('.cpk-hex');
+          const inR = wrapper.querySelector('.cpk-r');
+          const inG = wrapper.querySelector('.cpk-g');
+          const inB = wrapper.querySelector('.cpk-b');
+
+          // state
+          let {r,g,b} = hexToRgb(input.value||'#000000');
+          let {h,s,v} = rgbToHsv(r,g,b);
+
+          function updateUI(fromDrag){
+            const rgb = hsvToRgb(h,s,v);
+            const hex = rgbToHex(rgb.r,rgb.g,rgb.b);
+            swatch.style.background = hex;
+            if (hexInput) hexInput.value = hex;
+            if (inR) inR.value = rgb.r;
+            if (inG) inG.value = rgb.g;
+            if (inB) inB.value = rgb.b;
+            // SV background uses hue color
+            const hueColor = 'hsl('+h+', 100%, 50%)';
+            sv.style.background = hueColor;
+            // cursors
+            const svRect = sv.getBoundingClientRect();
+            const x = s * svRect.width; const y = (1 - v) * svRect.height;
+            dot.style.left = x + 'px'; dot.style.top = y + 'px';
+            const hueRect = hue.getBoundingClientRect();
+            const hl = (h/360) * hueRect.width; thumb.style.left = hl + 'px';
+            // sync input, emit once per update
+            if (!fromDrag) {
+              input.value = hex; input.dispatchEvent(new Event('input', {bubbles:true}));
+            }
+          }
+
+          function open(){ pop.classList.remove('cpk-hidden'); positionPop(); document.addEventListener('mousedown', onDocDown); }
+          function close(){ pop.classList.add('cpk-hidden'); document.removeEventListener('mousedown', onDocDown); }
+          function onDocDown(e){ if (!wrapper.contains(e.target)) close(); }
+          function positionPop(){
+            // keep simple; could flip if near bottom
+            pop.style.left = '0px'; pop.style.top = '100%';
+          }
+
+          // interactions
+          swatch.addEventListener('click', () => { if (pop.classList.contains('cpk-hidden')) open(); else close(); });
+
+          function svSetFromEvent(ev){
+            const rect = sv.getBoundingClientRect();
+            const x = clamp((ev.clientX - rect.left), 0, rect.width);
+            const y = clamp((ev.clientY - rect.top), 0, rect.height);
+            s = clamp(x / rect.width, 0, 1);
+            v = clamp(1 - y / rect.height, 0, 1);
+            updateUI(true);
+          }
+          function hueSetFromEvent(ev){
+            const rect = hue.getBoundingClientRect();
+            const x = clamp((ev.clientX - rect.left), 0, rect.width);
+            h = clamp((x / rect.width) * 360, 0, 360-0.001);
+            updateUI(true);
+          }
+          function drag(target, move, up){
+            const onMove = (e)=>{ move(e); };
+            const onUp = ()=>{ document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); updateUI(false); };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+          }
+          sv.addEventListener('mousedown', (e)=>{ svSetFromEvent(e); drag(sv, svSetFromEvent); });
+          hue.addEventListener('mousedown', (e)=>{ hueSetFromEvent(e); drag(hue, hueSetFromEvent); });
+
+          // manual inputs
+          if (hexInput){
+            hexInput.addEventListener('change', ()=>{
+              const rgb = parseColorText(hexInput.value);
+              if (!rgb) { hexInput.value = input.value || '#000000'; return; }
+              const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
+              h = isFinite(hsv.h) ? hsv.h : h; s = hsv.s; v = hsv.v;
+              updateUI(true);
+              input.value = rgbToHex(rgb.r, rgb.g, rgb.b);
+              input.dispatchEvent(new Event('input', {bubbles:true}));
+            });
+          }
+          function onRgbChange(){
+            const r = clamp(parseInt(inR.value||'0',10)||0,0,255);
+            const g = clamp(parseInt(inG.value||'0',10)||0,0,255);
+            const b = clamp(parseInt(inB.value||'0',10)||0,0,255);
+            const hsv = rgbToHsv(r,g,b);
+            h = isFinite(hsv.h) ? hsv.h : h; s = hsv.s; v = hsv.v;
+            updateUI(true);
+            input.value = rgbToHex(r,g,b);
+            input.dispatchEvent(new Event('input', {bubbles:true}));
+          }
+          if (inR && inG && inB){
+            ['input','change'].forEach(evt=>{
+              inR.addEventListener(evt, onRgbChange);
+              inG.addEventListener(evt, onRgbChange);
+              inB.addEventListener(evt, onRgbChange);
+            });
+          }
+
+          // reflect external changes (if any)
+          input.addEventListener('input', ()=>{
+            const rgb = hexToRgb(input.value||'#000000');
+            const hsv = rgbToHsv(rgb.r, rgb.g, rgb.b);
+            h = isFinite(hsv.h)? hsv.h : h; s = hsv.s; v = hsv.v; updateUI(true);
+          });
+
+          updateUI(false);
+        }
+
+        ['fg','bg'].forEach(attachPicker);
+      })();
+    </script>
+
+    <!-- Yandex.Metrika counter -->   
+<script type="text/javascript" > (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)}; m[i].l=1*new Date();k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)}) (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym"); ym(16681432, "init", { clickmap:true, trackLinks:true, accurateTrackBounce:true, webvisor:true }); </script> <noscript><div><img src="https://mc.yandex.ru/watch/16681432" style="position:absolute; left:-9999px;" alt="" /></div></noscript> 
+<!-- /Yandex.Metrika counter -->
+<script type="text/javascript" src="https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js" data-name="bmc-button" data-slug="CrOcfcFaft" data-color="#BD5FFF" data-emoji="" data-font="Cookie" data-text="Buy me a coffee" data-outline-color="#000000" data-font-color="#ffffff" data-coffee-color="#FFDD00"></script>
+  </body>
+  </html>
