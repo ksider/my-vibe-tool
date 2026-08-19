@@ -17,7 +17,7 @@ const {
 } = require('./search');
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = Number(process.env.PORT) || 3002;
 const publicDir = path.join(__dirname, 'public');
 const maxFileSize = 25 * 1024 * 1024;
 const maxFiles = 30;

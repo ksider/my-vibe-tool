@@ -19,5 +19,5 @@ RUN npm ci
 COPY . .
 RUN mkdir -p /tmp/multitool && chmod 1777 /tmp/multitool
 
-EXPOSE 3000
+EXPOSE 3002
 CMD ["npm", "start"]
