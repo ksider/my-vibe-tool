@@ -3,6 +3,5 @@ node_modules/
 .env.*
 .DS_Store
 npm-debug.log*
-public/css/*.css
 public/css/*.css.map
 .git
