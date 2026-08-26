@@ -17,7 +17,7 @@ h2 { margin:0; font-size:clamp(1.5rem,3vw,2.4rem); letter-spacing:-.05em; }
 .tool-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; margin-bottom:28px; }
 .tool-card { position:relative; min-height:220px; display:flex; flex-direction:column; padding:23px; border:1px solid var(--line); border-radius:18px; color:var(--ink); text-decoration:none; box-shadow:var(--shadow); transition:transform .2s ease, box-shadow .2s ease; overflow:hidden; }
 .tool-card:hover { transform:translateY(-4px); box-shadow:0 24px 60px rgba(33,48,38,.16); }
-.tool-card-search { background:#dce9da; }.tool-card-qr { background:#f5d8bd; }.tool-card-pdf { background:#d9e1ed; }.tool-card-badge { background:#ead9ed; }.tool-card-ftir { background:#d8e5e4; }
+.tool-card-search { background:#dce9da; }.tool-card-qr { background:#f5d8bd; }.tool-card-pdf { background:#d9e1ed; }.tool-card-badge { background:#ead9ed; }.tool-card-ftir { background:#d8e5e4; }.tool-card-lib { background:#e7e3d9; }
 .card-index { font-size:12px; font-weight:700; letter-spacing:.12em; opacity:.6; }
 .card-title { margin-top:auto; font-family:'Space Grotesk',sans-serif; font-size:1.65rem; font-weight:700; letter-spacing:-.04em; }
 .card-description { max-width:230px; margin-top:10px; color:rgba(23,35,30,.68); font-size:.9rem; line-height:1.4; }
