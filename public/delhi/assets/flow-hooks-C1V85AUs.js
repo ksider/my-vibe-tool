@@ -1,0 +1,1 @@
+var r={current:null},a=()=>matchMedia("(prefers-reduced-motion: reduce)").matches,e=()=>r.current?.capturing??!1,n=r=>e()?"Pass along":r,t=()=>e()?"arrow-right":"download";function o(a,e){let n=!0;return r.current?.pending(a).then(r=>{if(n)for(const a of r)e(a)}),()=>{n=!1}}export{n as a,r as i,o as n,a as o,t as r,e as t};

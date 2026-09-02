@@ -1,0 +1,1 @@
+function t(t,n){return t===n}export{t};

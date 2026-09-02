@@ -19,6 +19,7 @@ const {
 const app = express();
 const PORT = Number(process.env.PORT) || 3002;
 const publicDir = path.join(__dirname, 'public');
+const delhiDir = path.join(publicDir, 'delhi');
 const maxFileSize = 25 * 1024 * 1024;
 const maxFiles = 30;
 const allowedTypes = new Set([
@@ -38,6 +39,15 @@ const upload = multer({
 });
 
 app.use(express.static(publicDir));
+app.use(express.static(delhiDir, { index: false }));
+app.use('/delhi', express.static(delhiDir));
+for (const directory of [
+  '@embroider', 'art', 'assets', 'characters', 'compress', 'data', 'flags',
+  'fonts', 'heroes', 'jxl', 'lib', 'mediainfo', 'mupdf', 'pdfjs-wasm',
+  'stickers', 'substrata', 'tiles'
+]) {
+  app.use(`/${directory}`, express.static(path.join(delhiDir, directory)));
+}
 
 function resolveCountry(value) {
   const normalized = String(value || '').trim().toLowerCase().replace(/[^a-z]/g, '');
@@ -182,6 +192,7 @@ app.post('/api/merge', (req, res, next) => {
   });
 });
 
+app.get('/delhi/{*splat}', (req, res) => res.sendFile(path.join(delhiDir, 'index.html')));
 app.get('/{*splat}', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 
 app.use((error, req, res, next) => {

@@ -1,0 +1,1 @@
+var r=new Function("u","return import(u)");export{r as t};

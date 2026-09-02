@@ -1,0 +1,1 @@
+import{n as r}from"./rolldown-runtime-Bv92FReW.js";import{_r as o,ho as t}from"./dist-DbesxMH9.js";function a(r,o){let a=t(r);return a?a.valueFor(o):void 0}var s=r({cacheFor:()=>a,guidFor:()=>o});export{a as n,s as t};

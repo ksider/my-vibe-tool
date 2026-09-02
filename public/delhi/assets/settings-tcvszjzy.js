@@ -1,0 +1,1 @@
+var e={highlightSentence:!1,highlightParagraph:!1,typewriter:!1,dimInactive:!1,showGutter:!0,showMarginLine:!0,codeMode:!1,enabledFields:["words"]};function t(){try{localStorage.removeItem("delphitools-editor-settings")}catch{}}export{t as n,e as t};
