@@ -2,6 +2,7 @@
   "name": "multitool",
   "version": "1.0.0",
   "private": true,
+  "license": "0BSD",
   "description": "Unified sponsor search, QR generator and server-side PDF merger.",
   "main": "server.js",
   "scripts": {
