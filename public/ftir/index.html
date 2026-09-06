@@ -36,6 +36,9 @@
           <button id="importSession" class="icon-btn" type="button" title="Import session" aria-label="Import session">
             <span class="material-symbols-outlined">unarchive</span>
           </button>
+          <button id="clearLocalSession" class="icon-btn" type="button" title="Clear local session" aria-label="Clear local session">
+            <span class="material-symbols-outlined">delete_sweep</span>
+          </button>
           <button id="copyPng" class="icon-btn saveimg" type="button" title="Copy chart PNG" aria-label="Copy chart PNG">
             <span class="material-symbols-outlined">image</span>
           </button>
@@ -125,6 +128,8 @@
         <div class="peaks-actions">
           <button id="addStripe" type="button" class="btn tonal" data-i18n="addStripe">Add stripe</button>
           <button id="copyStripes" type="button" class="btn tonal" data-i18n="copyStripes">Copy table</button>
+          <button id="copyConfirmedPayload" type="button" class="btn tonal">Copy confirmed JSON</button>
+          <button id="analyzeConfirmed" type="button" class="btn primary">Analyze confirmed</button>
           <p class="peaks-hint" data-i18n="peakHint">Click the chart to place a marker, then add it here.</p>
         </div>
       </div>
@@ -143,6 +148,13 @@
         <div id="peaksEmpty" class="peaks-empty" data-i18n="peaksEmpty">No stripes yet. Set a marker and add it here.</div>
         <div id="peaksBody" class="peaks-body"></div>
       </div>
+    </div>
+    <div class="card surface analysis-card" id="analysisCard" hidden>
+      <div class="peaks-header">
+        <h3>LLM interpretation</h3>
+        <span id="analysisStatus" class="analysis-status"></span>
+      </div>
+      <div id="analysisResult" class="analysis-result" aria-live="polite"></div>
     </div>
     <footer class="footer surface">
       <div class="footer-links">

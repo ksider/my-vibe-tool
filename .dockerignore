@@ -3,3 +3,7 @@ node_modules
 npm-debug.log
 *.tmp
 .DS_Store
+*.env
+public/ftir/server
+public/ftir/temp
+public/ftir/.ai

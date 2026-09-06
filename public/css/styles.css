@@ -20,7 +20,7 @@ h2 { margin:0; font-size:clamp(1.5rem,3vw,2.4rem); letter-spacing:-.05em; }
 .tool-card-search { background:#dce9da; }.tool-card-qr { background:#f5d8bd; }.tool-card-pdf { background:#d9e1ed; }.tool-card-pdfcraft { background:#f0dfbd; }.tool-card-badge { background:#ead9ed; }.tool-card-ftir { background:#d8e5e4; }.tool-card-lib { background:#e7e3d9; }
 .card-index { font-size:12px; font-weight:700; letter-spacing:.12em; opacity:.6; }
 .card-title { margin-top:auto; font-family:'Space Grotesk',sans-serif; font-size:1.65rem; font-weight:700; letter-spacing:-.04em; }
-.card-description { max-width:230px; margin-top:10px; color:rgba(23,35,30,.68); font-size:.9rem; line-height:1.4; }
+.card-description { max-width:180px; margin-top:10px; color:rgba(23,35,30,.68); font-size:.9rem; line-height:1.4; }
 .card-arrow { position:absolute; top:20px; right:22px; font-size:1.5rem; }
 .tool-panel { border:1px solid var(--line); border-radius:22px; padding:26px; background:rgba(255,253,248,.84); box-shadow:var(--shadow); }
 .panel-heading { display:flex; justify-content:space-between; align-items:end; gap:20px; margin-bottom:24px; }

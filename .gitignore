@@ -4,3 +4,7 @@ node_modules/
 .DS_Store
 npm-debug.log*
 .git
+*.env
+public/ftir/server
+public/ftir/temp
+public/ftir/.ai

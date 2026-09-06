@@ -4,6 +4,7 @@
   const supportedLangs = config.supportedLangs || Object.keys(translations) || ['en'];
   const footerLinks = config.footerLinks || {};
   const chartSettings = config.chart || {};
+  const analysisApi = config.analysisApi || '/api/analyze';
   const defaultXRange = chartSettings.defaultXRange || { min: 500, max: 4000 };
   const zones = chartSettings.zones || [];
 
@@ -37,9 +38,15 @@
   const peaksBody = document.getElementById('peaksBody');
   const peaksEmpty = document.getElementById('peaksEmpty');
   const copyStripesBtn = document.getElementById('copyStripes');
+  const copyConfirmedPayloadBtn = document.getElementById('copyConfirmedPayload');
+  const analyzeConfirmedBtn = document.getElementById('analyzeConfirmed');
+  const analysisCard = document.getElementById('analysisCard');
+  const analysisStatus = document.getElementById('analysisStatus');
+  const analysisResult = document.getElementById('analysisResult');
   const exportSessionBtn = document.getElementById('exportSession');
   const importSessionBtn = document.getElementById('importSession');
   const importSessionInput = document.getElementById('importSessionInput');
+  const clearLocalSessionBtn = document.getElementById('clearLocalSession');
   const selectFilesBtn = document.getElementById('selectFiles');
   const stripeSetBtns = document.querySelectorAll('.stripe-set-btn');
   const peakDb = Array.isArray(window.FTIR_BASE) ? window.FTIR_BASE : [];
@@ -81,6 +88,10 @@ let panMode = false;
 let showPoints = false;
 let panRaf = null;
 let panQueued = null;
+let measurementState = null;
+let analysisData = null;
+const LOCAL_SESSION_KEY = 'ftir_merger_local_session_v1';
+let localSaveTimer = null;
 
   const sanitizeName = (name) => (name || '').replace(/[^a-zA-Z0-9_-]+/g, '_') || 'col';
   const makeUniqueColumnName = (existing, raw) => {
@@ -877,6 +888,7 @@ let panQueued = null;
         offsetInput.addEventListener('input', () => {
           offsets.set(file, Number(offsetInput.value) || 0);
           renderChartFromData(lastData, { skipLegend: true });
+          scheduleLocalSave();
         });
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
@@ -947,7 +959,7 @@ let panQueued = null;
           .attr('stroke-width', 1.2);
       });
       markerText.attr('x', x(clamped)).text(`x = ${clamped.toFixed(2)}`);
-      svg.style('cursor', 'col-resize');
+      svg.style('cursor', measurementState ? 'crosshair' : 'col-resize');
       setStatus(`x=${clamped.toFixed(2)}`);
     };
 
@@ -970,12 +982,17 @@ let panQueued = null;
     };
 
     let isDragging = false;
-    svg.style('cursor', markerActive ? 'col-resize' : 'crosshair');
+    svg.style('cursor', 'crosshair');
 
     const handlePointer = (event) => {
       const [px, py] = d3.pointer(event, g.node());
       if (px < 0 || px > innerW || py < 0 || py > innerH) return;
       const xVal = x.invert(px);
+      if (measurementState) {
+        applyMarker(xVal);
+        measureStripeFromChart(xVal);
+        return;
+      }
       applyMarker(xVal);
       updateZoneHighlight(xVal);
     };
@@ -1007,6 +1024,10 @@ let panQueued = null;
           yMax: yMaxVal,
         };
         svg.style('cursor', 'grab');
+        return;
+      }
+      if (measurementState) {
+        isDragging = false;
         return;
       }
       handlePointer(event);
@@ -1065,12 +1086,12 @@ let panQueued = null;
           panQueued = null;
         }
       }
-      svg.style('cursor', markerActive ? 'col-resize' : 'crosshair');
+      svg.style('cursor', 'crosshair');
       clearZoneHighlight();
     });
 
     svg.on('click', (event) => {
-      if (event.detail === 2) return; // let dblclick handle it
+      if (event.detail === 2 && !measurementState) return; // let dblclick handle it outside measurement mode
       if (event.ctrlKey) return;
       handlePointer(event);
     });
@@ -1078,6 +1099,7 @@ let panQueued = null;
     svg.on('dblclick', (event) => {
       if (event.ctrlKey) return;
       event.preventDefault();
+      if (measurementState) return;
       handlePointer(event);
       if (addStripeBtn) {
         addStripeBtn.click();
@@ -1274,6 +1296,7 @@ let panQueued = null;
     setControlsEnabled(true);
     renderChartFromData(lastData);
     renderStripesTable();
+    scheduleLocalSave();
   }
 
   function downsamplePoints(arr, maxPoints = 1500) {
@@ -1288,6 +1311,328 @@ let panQueued = null;
 
   function currentStripes() {
     return stripeSets[activeStripeSet] || [];
+  }
+
+  function findNearestSpectrumPoint(xVal) {
+    let nearest = null;
+    let bestDistance = Infinity;
+    for (const point of lastData || []) {
+      if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
+      const distance = Math.abs(point.x - xVal);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        nearest = point;
+      }
+    }
+    return nearest;
+  }
+
+  function estimatePeakShape(centerX, leftX, rightX) {
+    const minX = Math.min(leftX, rightX);
+    const maxX = Math.max(leftX, rightX);
+    const centerPoint = findNearestSpectrumPoint(centerX);
+    if (!centerPoint) return { shape: 'unknown', fwhmCm1: null };
+    const points = (lastData || [])
+      .filter((point) => point.file === centerPoint.file && point.x >= minX && point.x <= maxX)
+      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+      .sort((a, b) => a.x - b.x);
+    if (points.length < 5) return { shape: 'unknown', fwhmCm1: null };
+    const centerIndex = points.reduce((best, point, index) => (
+      Math.abs(point.x - centerX) < Math.abs(points[best].x - centerX) ? index : best
+    ), 0);
+    const edgeValues = [points[0].y, points[points.length - 1].y];
+    const baseline = edgeValues.reduce((sum, value) => sum + value, 0) / edgeValues.length;
+    const centerY = points[centerIndex].y;
+    const peakHeight = centerY - baseline;
+    const direction = peakHeight >= 0 ? 1 : -1;
+    const halfLevel = baseline + peakHeight / 2;
+    let leftIndex = centerIndex;
+    let rightIndex = centerIndex;
+    while (leftIndex > 0 && direction * (points[leftIndex].y - halfLevel) > 0) leftIndex -= 1;
+    while (rightIndex < points.length - 1 && direction * (points[rightIndex].y - halfLevel) > 0) rightIndex += 1;
+    const fwhmCm1 = Math.abs(points[rightIndex].x - points[leftIndex].x);
+    if (!Number.isFinite(fwhmCm1) || fwhmCm1 <= 0) return { shape: 'unknown', fwhmCm1: null };
+    const shape = fwhmCm1 <= 20 ? 'sharp' : fwhmCm1 >= 80 ? 'broad' : 'band';
+    return { shape, fwhmCm1: Number(fwhmCm1.toFixed(2)) };
+  }
+
+  function measureStripeFromChart(xVal) {
+    if (!measurementState) return false;
+    const stripe = (stripeSets[measurementState.setId] || [])
+      .find((item) => item.id === measurementState.stripeId);
+    if (!stripe) {
+      measurementState = null;
+      return false;
+    }
+    if (measurementState.step === 'left') {
+      measurementState.leftX = xVal;
+      measurementState.step = 'right';
+      setStatus('Left boundary set. Click the right band boundary.');
+      return true;
+    }
+
+    const leftX = measurementState.leftX;
+    const centerX = measurementState.centerX;
+    const width = Math.abs(xVal - leftX);
+    const centerPoint = findNearestSpectrumPoint(centerX);
+    const leftPoint = findNearestSpectrumPoint(leftX);
+    const rightPoint = findNearestSpectrumPoint(xVal);
+    const edgeValues = [leftPoint?.y, rightPoint?.y].filter(Number.isFinite);
+    const allValues = (lastData || []).map((point) => point.y).filter(Number.isFinite);
+    if (centerPoint && edgeValues.length && allValues.length > 1) {
+      const edgeAverage = edgeValues.reduce((sum, value) => sum + value, 0) / edgeValues.length;
+      const signalRange = Math.max(...allValues) - Math.min(...allValues);
+      if (signalRange > 0) {
+        stripe.intensity = Math.round((Math.abs(centerPoint.y - edgeAverage) / signalRange) * 100);
+      }
+    }
+    stripe.widthCm1 = Number.isFinite(width) ? Number(width.toFixed(2)) : null;
+    const peakShape = estimatePeakShape(centerX, leftX, xVal);
+    stripe.shape = peakShape.shape;
+    stripe.fwhmCm1 = peakShape.fwhmCm1;
+    stripe.source = 'manual';
+    measurementState = null;
+    chartEl.classList.remove('chart-measuring');
+    setStatus(`Measured ${stripe.x.toFixed(2)} cm⁻¹, width ${stripe.widthCm1.toFixed(2)} cm⁻¹.`);
+    renderChartFromData(lastData);
+    renderStripesTable();
+    return true;
+  }
+
+  function startStripeMeasurement(setId, stripeId) {
+    const stripe = (stripeSets[setId] || []).find((item) => item.id === stripeId);
+    if (!stripe || !Number.isFinite(Number(stripe.x))) return;
+    measurementState = { setId, stripeId, centerX: Number(stripe.x), step: 'left' };
+    setActiveStripeSet(setId);
+    chartEl.classList.add('chart-measuring');
+    setStatus('Width mode: click the left boundary, then the right boundary.');
+  }
+
+  function buildConfirmedPeaksPayload() {
+    const confirmed = Array.isArray(stripeSets.confirmed) ? stripeSets.confirmed : [];
+    return {
+      version: '1.0',
+      spectrum: {
+        files: lastFilesRaw.map((file) => file.name).filter(Boolean),
+        sample: sampleInput?.value || '',
+        series: lastColumns.slice(),
+      },
+      confirmedPeaks: confirmed.map((stripe) => ({
+        id: stripe.id || null,
+        nu: Number.isFinite(Number(stripe.x)) ? Number(stripe.x) : null,
+        label: stripe.labelSource === 'manual' ? (stripe.label || '') : (stripe.analysisLabel || stripe.label || ''),
+        widthCm1: Number.isFinite(Number(stripe.widthCm1)) ? Number(stripe.widthCm1) : null,
+        fwhmCm1: Number.isFinite(Number(stripe.fwhmCm1)) ? Number(stripe.fwhmCm1) : null,
+        intensity: stripe.intensity || null,
+        shape: stripe.shape || null,
+        source: stripe.source || 'manual',
+        localWindow: Array.isArray(stripe.localWindow) ? stripe.localWindow : null,
+      })),
+      analysis: analysisData,
+    };
+  }
+
+  function buildSessionSnapshot() {
+    return {
+      version: 1,
+      files: lastFilesRaw,
+      fileName: fileNameInput.value,
+      sampleIndex: sampleInput ? sampleInput.value : '',
+      offsets: Object.fromEntries(offsets),
+      stripeSets,
+      activeStripeSet,
+      visibleSeries: Object.fromEntries(visibleSeries),
+      baselineSeries,
+      baselineModel,
+      xRange: { min: xMinInput.value, max: xMaxInput.value },
+      yRange: { min: yMinInput.value, max: yMaxInput.value },
+      customNames: Object.fromEntries(customNames),
+      analysis: analysisData,
+    };
+  }
+
+  function saveLocalSession() {
+    if (!lastFilesRaw.length) return;
+    try {
+      localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(buildSessionSnapshot()));
+    } catch (error) {
+      console.warn('[FTIR local session] save failed', { name: error.name, message: error.message });
+    }
+  }
+
+  function scheduleLocalSave() {
+    if (localSaveTimer) clearTimeout(localSaveTimer);
+    localSaveTimer = setTimeout(() => {
+      localSaveTimer = null;
+      saveLocalSession();
+    }, 150);
+  }
+
+  function clearLocalSession() {
+    try {
+      localStorage.removeItem(LOCAL_SESSION_KEY);
+    } catch (error) {
+      console.warn('[FTIR local session] clear failed', { name: error.name, message: error.message });
+    }
+    resetWorkspace();
+    if (analysisCard) analysisCard.hidden = true;
+    setStatus('Local session cleared.');
+  }
+
+  function restoreLocalSession() {
+    try {
+      const raw = localStorage.getItem(LOCAL_SESSION_KEY);
+      if (!raw) return;
+      const session = JSON.parse(raw);
+      if (!session || session.version !== 1 || !Array.isArray(session.files) || !session.files.length) return;
+      lastFilesRaw = session.files.map((file) => ({ name: file.name, content: file.content }));
+      stripeSets = session.stripeSets || stripeSets;
+      activeStripeSet = session.activeStripeSet || activeStripeSet;
+      if (!stripeSets[activeStripeSet]) stripeSets[activeStripeSet] = [];
+      processFiles(lastFilesRaw, {
+        fileName: session.fileName,
+        sampleIndex: session.sampleIndex,
+        offsets: session.offsets,
+        visibleSeries: session.visibleSeries,
+        baselineSeries: session.baselineSeries,
+        baselineModel: session.baselineModel,
+        xRange: session.xRange,
+        yRange: session.yRange,
+        customNames: session.customNames,
+        stripeSets,
+      });
+      analysisData = session.analysis || null;
+      if (analysisData && analysisCard && analysisResult) {
+        analysisCard.hidden = false;
+        analysisStatus.textContent = 'Restored';
+        analysisResult.innerHTML = renderAnalysisReport(analysisData);
+      }
+      setStatus('Restored local session.');
+      console.info('[FTIR local session] restored', { files: lastFilesRaw.length });
+    } catch (error) {
+      console.warn('[FTIR local session] restore failed', { name: error.name, message: error.message });
+    }
+  }
+
+  function renderAnalysisReport(result) {
+    if (!result || typeof result !== 'object') return '<p class="analysis-empty">No interpretation received.</p>';
+    const escapeHtml = (value) => String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+    const list = (values, className = '') => {
+      if (!Array.isArray(values) || !values.length) return '';
+      return `<ul class="analysis-list ${className}">${values.map((value) => `<li>${escapeHtml(typeof value === 'string' ? value : JSON.stringify(value))}</li>`).join('')}</ul>`;
+    };
+    const candidates = Array.isArray(result.candidates) ? result.candidates : [];
+    const candidateCards = candidates.map((candidate, index) => {
+      const label = candidate.group || candidate.assignment || candidate.label || 'Assignment not returned';
+      const confidence = candidate.likelihood || candidate.confidence || 'unknown';
+      const confidenceClass = String(confidence).toLowerCase().replace(/[^a-z]+/g, '-');
+      const peak = Number.isFinite(Number(candidate.nu)) ? `<span class="analysis-peak">${escapeHtml(candidate.nu)} cm⁻¹</span>` : '';
+      return `<article class="analysis-candidate">
+        <div class="analysis-candidate-head"><span class="analysis-rank">${index + 1}</span><h4>${escapeHtml(label)}</h4><span class="analysis-confidence ${confidenceClass}">${escapeHtml(confidence)}</span></div>
+        ${peak}
+        ${candidate.reasoning || candidate.explanation ? `<p>${escapeHtml(candidate.reasoning || candidate.explanation)}</p>` : `<p class="analysis-warning">No explanation returned for this candidate.</p>`}
+      </article>`;
+    }).join('');
+    const supporting = Array.isArray(result.supporting_peaks) && result.supporting_peaks.length
+      ? `<section class="analysis-section"><h4>Supporting peaks</h4><div class="analysis-tags">${result.supporting_peaks.map((peak) => {
+        const value = typeof peak === 'object' ? peak.nu : peak;
+        const label = typeof peak === 'object' ? (peak.assignment || peak.label || '') : '';
+        return `<span class="analysis-tag"><strong>${escapeHtml(value)} cm⁻¹</strong>${label ? ` ${escapeHtml(label)}` : ''}</span>`;
+      }).join('')}</div></section>`
+      : '';
+    const sections = [
+      result.missing_evidence?.length ? `<section class="analysis-section"><h4>Missing evidence</h4>${list(result.missing_evidence)}</section>` : '',
+      result.limitations?.length ? `<section class="analysis-section"><h4>Limitations</h4>${list(result.limitations)}</section>` : '',
+    ].join('');
+    return `<div class="analysis-report">
+      <section class="analysis-summary"><h4>Interpretation</h4><p>${escapeHtml(result.interpretation || 'No summary provided.')}</p></section>
+      ${candidateCards ? `<section class="analysis-section"><h4>Candidate assignments</h4><div class="analysis-candidates">${candidateCards}</div></section>` : ''}
+      ${supporting}${sections}
+      <div class="analysis-footer"><span>Confidence: <strong>${escapeHtml(result.confidence || 'unknown')}</strong></span>${result.model ? `<span>Model: ${escapeHtml(result.model)}</span>` : ''}</div>
+    </div>`;
+  }
+
+  function applyAnalysisSuggestions(result) {
+    const confirmed = Array.isArray(stripeSets.confirmed) ? stripeSets.confirmed : [];
+    const candidates = Array.isArray(result?.candidates) ? result.candidates : [];
+    let applied = 0;
+    candidates.forEach((candidate) => {
+      const explicitNu = candidate.nu ?? candidate.wavenumber ?? candidate.peak;
+      const candidateNu = Number(explicitNu);
+      const stripe = confirmed.reduce((nearest, item) => {
+        const distance = Number.isFinite(candidateNu) ? Math.abs(Number(item.x) - candidateNu) : 0;
+        if (!nearest || distance < nearest.distance) return { item, distance };
+        return nearest;
+      }, null);
+      if (!stripe || (Number.isFinite(candidateNu) && stripe.distance > 30)) return;
+      const label = candidate.group || candidate.assignment || candidate.label;
+      const explanation = candidate.reasoning || candidate.explanation;
+      if (label && stripe.item.labelSource !== 'manual') {
+        stripe.item.analysisLabel = label;
+        stripe.item.label = label;
+      }
+      if (label || explanation) {
+        stripe.item.analysisTip = [label, explanation].filter(Boolean).join(' — ');
+        stripe.item.tip = stripe.item.analysisTip;
+        applied += 1;
+      }
+    });
+    console.info('[FTIR analysis] suggestions.applied', { candidates: candidates.length, confirmed: confirmed.length, applied });
+  }
+
+  async function analyzeConfirmedPeaks() {
+    const payload = buildConfirmedPeaksPayload();
+    if (!payload.confirmedPeaks.length) {
+      setStatus('No confirmed peaks to analyze.', true);
+      return;
+    }
+    if (analysisCard) analysisCard.hidden = false;
+    if (analysisStatus) analysisStatus.textContent = 'Analyzing...';
+    if (analysisResult) analysisResult.textContent = '';
+    if (analyzeConfirmedBtn) analyzeConfirmedBtn.disabled = true;
+    console.info('[FTIR analysis] request.start', {
+      url: analysisApi,
+      origin: window.location.origin,
+      confirmedPeaks: payload.confirmedPeaks.length,
+      files: payload.spectrum.files.length,
+    });
+    try {
+      const startedAt = performance.now();
+      const response = await fetch(analysisApi, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      console.info('[FTIR analysis] response', { status: response.status, ok: response.ok, durationMs: Math.round(performance.now() - startedAt) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || `Analysis failed (${response.status})`);
+      if (analysisStatus) analysisStatus.textContent = 'Complete';
+      analysisData = body.result || body;
+      applyAnalysisSuggestions(analysisData);
+      if (analysisResult) analysisResult.innerHTML = renderAnalysisReport(analysisData);
+      if (stripeSets.confirmed?.length) setActiveStripeSet('confirmed');
+      renderStripesTable();
+      scheduleLocalSave();
+      setStatus('Confirmed peaks analyzed.');
+    } catch (error) {
+      console.error('[FTIR analysis] request.failed', {
+        url: analysisApi,
+        origin: window.location.origin,
+        name: error.name,
+        message: error.message,
+        hint: 'Check backend process, URL and CORS settings.',
+      });
+      if (analysisStatus) analysisStatus.textContent = 'Unavailable';
+      if (analysisResult) analysisResult.textContent = error.message || 'Analysis failed';
+      setStatus('Analysis service unavailable. The local session is unchanged.', true);
+    } finally {
+      if (analyzeConfirmedBtn) analyzeConfirmedBtn.disabled = false;
+    }
   }
 
   function updateBaselineSelectOptions(cols = lastColumns || []) {
@@ -1363,6 +1708,7 @@ let panQueued = null;
     const stripes = currentStripes();
     if (!stripes.length) {
       peaksEmpty.style.display = 'block';
+      scheduleLocalSave();
       return;
     }
     peaksEmpty.style.display = 'none';
@@ -1383,23 +1729,45 @@ let panQueued = null;
         stripe.x = num;
         renderChartFromData(lastData, { skipLegend: true });
         renderStripesTable();
+        scheduleLocalSave();
       });
 
       const nameCell = document.createElement('input');
       nameCell.type = 'text';
       nameCell.className = 'peaks-input';
-      nameCell.value = stripe.label || '';
+      nameCell.value = stripe.labelSource === 'manual' ? (stripe.label || '') : (stripe.analysisLabel || stripe.label || '');
       nameCell.placeholder = t('colLabel');
       nameCell.addEventListener('input', () => {
         stripe.label = nameCell.value;
+        stripe.labelSource = 'manual';
         renderChartFromData(lastData, { skipLegend: true });
+        scheduleLocalSave();
       });
 
       const tipCell = document.createElement('div');
       tipCell.className = 'peaks-tip';
-      tipCell.textContent = stripe.tip || t('tipPlaceholder');
+      tipCell.textContent = stripe.analysisTip || stripe.tip || t('tipPlaceholder');
+      if (stripe.widthCm1 !== undefined || stripe.intensity !== undefined || stripe.shape) {
+        const meta = document.createElement('div');
+        meta.className = 'peaks-meta';
+        const widthText = Number.isFinite(Number(stripe.widthCm1)) ? `${Number(stripe.widthCm1).toFixed(2)} cm⁻¹` : '—';
+        const fwhmText = Number.isFinite(Number(stripe.fwhmCm1)) ? `${Number(stripe.fwhmCm1).toFixed(2)} cm⁻¹` : '—';
+        const intensityText = Number.isFinite(Number(stripe.intensity)) ? `${stripe.intensity}%` : '—';
+        meta.textContent = `Width: ${widthText} | FWHM: ${fwhmText} | Intensity: ${intensityText} | Shape: ${stripe.shape || '—'}`;
+        tipCell.appendChild(meta);
+      }
       const moveWrap = document.createElement('div');
       moveWrap.className = 'peaks-move';
+      const measureBtn = document.createElement('button');
+      measureBtn.type = 'button';
+      measureBtn.className = 'peaks-move-btn';
+      measureBtn.textContent = 'Measure';
+      measureBtn.title = 'Measure center, width and relative intensity on the chart';
+      measureBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        startStripeMeasurement(activeStripeSet, stripe.id);
+      });
+      moveWrap.appendChild(measureBtn);
       ['candidates', 'confirmed'].forEach((setId) => {
         const btn = document.createElement('button');
         btn.type = 'button';
@@ -1414,6 +1782,7 @@ let panQueued = null;
           const target = stripeSets[setId] || [];
           stripeSets[setId] = [...target, { ...stripe, color: stripeColors[target.length % stripeColors.length] }];
           setActiveStripeSet(setId);
+          scheduleLocalSave();
         });
         moveWrap.appendChild(btn);
       });
@@ -1425,6 +1794,7 @@ let panQueued = null;
         stripeSets[activeStripeSet] = stripes.filter((s) => s.id !== stripe.id);
         renderChartFromData(lastData);
         renderStripesTable();
+        scheduleLocalSave();
       });
       row.append(colorSwatch, val, nameCell, tipCell, moveWrap, removeBtn);
       peaksBody.appendChild(row);
@@ -1501,17 +1871,29 @@ let panQueued = null;
     const tipText = matches
       .map((m) => [m.group, m.class, m.details].filter(Boolean).join(' — '))
       .join('; ');
-    stripeSets[activeStripeSet] = [...current, { id: `stripe-${stripeIdSeq}`, x: xVal, color, label, tip: tipText }];
+    stripeSets[activeStripeSet] = [...current, { id: `stripe-${stripeIdSeq}`, x: xVal, color, label, tip: tipText, labelSource: label ? 'peak-db' : 'empty' }];
     renderChartFromData(lastData);
     renderStripesTable();
+    scheduleLocalSave();
   });
 
   copyStripesBtn?.addEventListener('click', () => {
     const stripes = currentStripes();
     if (!stripes.length) return;
-    const header = ['wavenumber', 'label', 'tip'];
-    const rows = stripes.map((s) => [s.x.toFixed(2), s.label || '', s.tip || '']);
-    const tsv = [header.join('\t'), ...rows.map((r) => r.join('\t'))].join('\n');
+    const header = ['wavenumber', 'label', 'tip', 'width_cm1', 'fwhm_cm1', 'intensity', 'shape'];
+    const rows = stripes.map((s) => [
+      s.x.toFixed(2),
+      s.labelSource === 'manual' ? (s.label || '') : (s.analysisLabel || s.label || ''),
+      s.analysisTip || s.tip || '',
+      s.widthCm1 ?? '',
+      s.fwhmCm1 ?? '',
+      s.intensity ?? '',
+      s.shape || '',
+    ]);
+    const report = analysisData
+      ? [``, 'INTERPRETATION', analysisData.interpretation || '', `CONFIDENCE\t${analysisData.confidence || 'unknown'}`]
+      : [];
+    const tsv = [header.join('\t'), ...rows.map((r) => r.join('\t')), ...report].join('\n');
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(tsv).then(
         () => setStatus('Copied stripes.'),
@@ -1519,6 +1901,26 @@ let panQueued = null;
       );
     }
   });
+
+  copyConfirmedPayloadBtn?.addEventListener('click', () => {
+    const payload = buildConfirmedPeaksPayload();
+    if (!payload.confirmedPeaks.length) {
+      setStatus('No confirmed peaks to copy.', true);
+      return;
+    }
+    const text = JSON.stringify(payload, null, 2);
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(
+        () => setStatus('Copied confirmed peaks JSON.'),
+        () => setStatus('Copy failed.', true)
+      );
+    } else {
+      setStatus('Clipboard is unavailable.', true);
+    }
+  });
+
+  analyzeConfirmedBtn?.addEventListener('click', analyzeConfirmedPeaks);
+  clearLocalSessionBtn?.addEventListener('click', clearLocalSession);
 
   const copyCurrentSvg = () => {
     const svg = chartEl.querySelector('svg');
@@ -1595,6 +1997,7 @@ let panQueued = null;
       xRange: { min: xMinInput.value, max: xMaxInput.value },
       yRange: { min: yMinInput.value, max: yMaxInput.value },
       customNames: Object.fromEntries(customNames),
+      analysis: analysisData,
     };
     const blob = new Blob([JSON.stringify(session, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -1619,6 +2022,7 @@ let panQueued = null;
       fileNameInput.value = session.fileName || 'merged.csv';
       lastFilesRaw = session.files.map((x) => ({ name: x.name, content: x.content }));
       stripeSets = session.stripeSets || stripeSets;
+      analysisData = session.analysis || null;
       activeStripeSet = session.activeStripeSet || activeStripeSet;
       if (!stripeSets[activeStripeSet]) stripeSets[activeStripeSet] = [];
       processFiles(lastFilesRaw, {
@@ -1633,6 +2037,11 @@ let panQueued = null;
         customNames: session.customNames,
         stripeSets: stripeSets,
       });
+      if (analysisData && analysisCard && analysisResult) {
+        analysisCard.hidden = false;
+        analysisStatus.textContent = 'Restored';
+        analysisResult.innerHTML = renderAnalysisReport(analysisData);
+      }
     } catch (err) {
       console.error(err);
       setStatus('Failed to import session', true);
@@ -1764,6 +2173,7 @@ let panQueued = null;
     baselineSeries = null;
     baselineMap = new Map();
     stripeSets = { candidates: [], confirmed: [] };
+    analysisData = null;
     activeStripeSet = 'candidates';
     stripeIdSeq = 0;
     fileInput.value = ''; // allow re-importing the same file
@@ -1814,6 +2224,8 @@ let panQueued = null;
     updateBaselineSelectOptions();
     renderChartFromData(lastData);
     renderStripesTable();
+    scheduleLocalSave();
   }
+  restoreLocalSession();
 })();
   // pan mode button removed

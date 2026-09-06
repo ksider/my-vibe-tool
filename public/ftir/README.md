@@ -39,7 +39,7 @@
   - Add sample datasets and scripted regression checks for merge/offset/baseline.
   - Visual regression snapshots for chart rendering on key flows.
 
-## How to use (no backend required)
+## How to use (frontend)
 
 1) **Open** `index.html` locally in a modern browser (Chrome/Firefox/Safari). Everything runs client-side.  
 2) **Add spectra** via the toolbar “upload” button. Supported: TXT (pairs), JCAMP-DX (`.jdx/.dx/.jcm/.jsm` including packed DIFDUP/PAC), and the provided examples in `exmaple/`. Files append to the current session.  
@@ -50,6 +50,55 @@
 7) **Save chart/CSV**: copy PNG/SVG via toolbar buttons; “Save CSV” exports only visible series with current baseline offsets applied.  
 8) **Baseline**: baseline UI is currently hidden by design; Y auto-scaling respects applied baseline when enabled in code.  
 9) **Internationalization**: language toggle EN/RU/SR in header. Translations live in `config.js`.
+
+## Analysis backend (optional)
+
+The frontend remains usable without a backend. The server is an isolated proxy for
+future LLM interpretation and accepts only confirmed peaks from the frontend.
+
+```bash
+cd server
+cp .env.example .env
+npm start
+```
+
+For a local Gemini test, edit `server/.env` and enter the key manually in the
+`GEMINI_API_KEY` value. Never commit this file. The configured economical model
+is `gemini-3.5-flash-lite`.
+
+For a local smoke test without a key, set `LLM_PROVIDER=mock` first:
+
+```bash
+curl http://127.0.0.1:8787/health
+```
+
+The analysis endpoint is `POST /api/analyze` and requires the versioned JSON
+payload copied by the `Copy confirmed JSON` button. To enable a cloud provider,
+set `LLM_PROVIDER=gemini` and `GEMINI_API_KEY`, or `LLM_PROVIDER=mistral` and
+`MISTRAL_API_KEY`, in the server environment. Never place real keys in `.env`
+commits, frontend files, GitHub Actions logs, or exported sessions.
+
+The server enforces a request size limit, basic per-client rate limit, payload
+validation, provider timeout, and reads the canonical references from
+`REFERENCE_DIR`. For a standalone server repository, keep
+`references/bands_master.md` and `references/diagnostic_zones.md` beside
+`server.js`. It does not modify candidate or confirmed stripes.
+
+### Docker deployment
+
+The backend can be deployed independently from the static frontend:
+
+```bash
+cd server
+cp .env.example .env
+# Put the API key only in .env or your hosting secret manager.
+docker compose up --build -d
+curl http://127.0.0.1:8787/health
+```
+
+Set `ALLOWED_ORIGIN` to the exact public frontend origin before deployment,
+for example `https://ftir.example.com`. Set the frontend API URL in
+`config.js` as `analysisApi: 'https://api.example.com/api/analyze'`.
 
 ## Configuration
 
@@ -63,7 +112,8 @@
 
 - Core logic: `app.js` (parsing, chart rendering with D3, session management, stripes, JCAMP decoding).  
 - Styles: `styles.css`.  
-- No build step or server is required; open `index.html`.
+- No frontend build step is required; open `index.html`. The backend is optional
+  until the LLM analysis button is connected.
 
 ## License
 
