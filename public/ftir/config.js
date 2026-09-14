@@ -2,7 +2,7 @@ window.APP_CONFIG = {
   supportedLangs: ['en', 'ru', 'sr'],
   // Local test: http://127.0.0.1:8787/api/analyze
   // Production: replace with the public HTTPS backend URL.
-  analysisApi: 'https://ftirllm.nikolaisemenov.com',
+  analysisApi: 'https://ftirllm.nikolaisemenov.com/api/analyze',
   footerLinks: {
     site: 'https://nikolaysemenov.ru',
     github: 'https://github.com/ksider/nikolaysemenov.ru/tree/main/ftir',
