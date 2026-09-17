@@ -339,7 +339,6 @@ h2 {
 .hidden {
   display: none !important;
 }
-
 .home-footer {
   position: fixed;
   bottom: -35px;
@@ -350,7 +349,6 @@ h2 {
   padding: 0;
   border: 0;
 }
-
 .home-footer-link {
   display: block;
   width: 250px;
