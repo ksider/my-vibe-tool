@@ -25,6 +25,7 @@ h2 { margin:0; font-size:clamp(1.5rem,3vw,2.4rem); letter-spacing:-.05em; }
 .tool-card:hover { transform:translateY(-4px); box-shadow:0 24px 60px rgba(33,48,38,.16); }
 .tool-card-search { background:#dce9da; }.tool-card-qr { background:#f5d8bd; }.tool-card-pdf { background:#d9e1ed; }.tool-card-pdfcraft { background:#f0dfbd; }.tool-card-badge { background:#ead9ed; }.tool-card-ftir { background:#d8e5e4; }.tool-card-lib { background:#e7e3d9; }
 .card-art { position:absolute; z-index:0; inset:0; width:100%; height:100%; object-fit:cover; object-position:center; opacity:.58; mix-blend-mode:multiply; pointer-events:none; }
+.card-art-sponsor { inset:0 auto auto 70%; width:auto; height:70%; object-fit:contain; object-position:center top; opacity:.72; transform:translateX(-50%); }
 .card-art-delphi { inset:0 0 0 auto; width:40%; object-fit:contain; object-position:right bottom; opacity:.82; }
 .card-index,.card-title,.card-description,.card-arrow,.card-related-link { position:relative; z-index:1; }
 .card-index { font-size:12px; font-weight:700; letter-spacing:.12em; opacity:.6; }
