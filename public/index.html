@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Multitool</title>
-  <link rel="stylesheet" href="/css/styles.css">
+  <link rel="stylesheet" href="/css/styles.css?v=layout-20260917-7">
 </head>
 <body>
   <div class="shell">
@@ -22,59 +22,58 @@
 
     <main>
       <section class="tool-grid" aria-label="Utilities">
-        <a class="tool-card tool-card-search" href="/search/">
+        <article class="tool-card tool-card-search tool-card-primary">
           <span class="card-index">01</span>
-          <span class="card-title">Sponsor search</span>
+          <a class="card-title card-title-link" href="/search/">Sponsor search</a>
           <span class="card-description">Search the UK and Netherlands public registers.</span>
-          <span class="card-arrow" aria-hidden="true">↗</span>
-        </a>
-        <a class="tool-card tool-card-qr" href="/qr/">
+          <div id="sponsor-recent" class="card-recent hidden" aria-label="Recent sponsor searches">
+          <!--  <span class="card-recent-label">Recent searches</span>-->
+            <div id="sponsor-recent-list" class="card-recent-list"></div>
+          </div>
+          <a class="card-arrow" href="/search/" aria-label="Open Sponsor search">↗</a>
+        </article>
+        <a class="tool-card tool-card-ftir tool-card-primary" href="/ftir/">
           <span class="card-index">02</span>
-          <span class="card-title">QR generator</span>
-          <span class="card-description">Create a styled QR code with custom colors and a logo.</span>
-          <span class="card-arrow" aria-hidden="true">↗</span>
-        </a>
-        <a class="tool-card tool-card-pdf" href="/pdf/">
-          <span class="card-index">03</span>
-          <span class="card-title">PDF merger</span>
-          <span class="card-description">Arrange images, PDFs and DOCX files into one PDF.</span>
-          <span class="card-arrow" aria-hidden="true">↗</span>
-        </a>
-        <a class="tool-card tool-card-pdfcraft" href="https://pdf.nikolaisemenov.com/en/tools/">
-          <span class="card-index">04</span>
-          <span class="card-title">PDFcraft</span>
-          <span class="card-description">A dedicated workspace for working with PDFs.</span>
-          <span class="card-arrow" aria-hidden="true">↗</span>
-        </a>
-        <a class="tool-card tool-card-badge" href="/badge/">
-          <span class="card-index">05</span>
-          <span class="card-title">Badge maker</span>
-          <span class="card-description">Design name badges from templates and participant data.</span>
-          <span class="card-arrow" aria-hidden="true">↗</span>
-        </a>
-        <a class="tool-card tool-card-ftir" href="/ftir/">
-          <span class="card-index">06</span>
           <span class="card-title">FTIR viewer</span>
           <span class="card-description">Load and compare spectra from TXT, CSV and JCAMP files.</span>
           <span class="card-arrow" aria-hidden="true">↗</span>
         </a>
-
-        <a class="tool-card tool-card-delhi" href="/delhi/">
-          <span class="card-index">07</span>
+        <a class="tool-card tool-card-lib tool-card-primary" href="https://lib.nikolaisemenov.com/">
+          <img class="card-art card-art-literature" src="/assets/literature-engraving-v2.png" alt="" aria-hidden="true">
+          <span class="card-index">03</span>
+          <span class="card-title">Literature</span>
+          <span class="card-description">My private unsorted pdf library.</span>
+          <span class="card-arrow" aria-hidden="true">↗</span>
+        </a>
+        <article class="tool-card tool-card-pdfcraft tool-card-secondary">
+          <span class="card-index">04</span>
+          <a class="card-title card-title-link" href="https://pdf.nikolaisemenov.com/en/tools/">PDFcraft</a>
+          <span class="card-description">A dedicated workspace for working with PDFs.</span>
+          <a class="card-arrow" href="https://pdf.nikolaisemenov.com/en/tools/" aria-label="Open PDFcraft">↗</a>
+          <a class="card-related-link" href="/pdf/">PDF merger</a>
+        </article>
+        <a class="tool-card tool-card-delhi tool-card-secondary" href="/delhi/">
+          <span class="card-index">05</span>
           <span class="card-title">Delhi tools</span>
           <span class="card-description">A collection of practical tools for everyday work.</span>
           <span class="card-arrow" aria-hidden="true">↗</span>
         </a>
-
-        <a class="tool-card tool-card-lib" href="https://lib.nikolaisemenov.com/">
-          <span class="card-index">08</span>
-          <span class="card-title">Literature</span>
-          <span class="card-description">My private unsorted pdf library.</span>
+        <a class="tool-card tool-card-qr tool-card-secondary" href="/qr/">
+          <span class="card-index">06</span>
+          <span class="card-title">QR generator</span>
+          <span class="card-description">Create a styled QR code with custom colors and a logo.</span>
+          <span class="card-arrow" aria-hidden="true">↗</span>
+        </a>
+        <a class="tool-card tool-card-badge tool-card-tertiary" href="/badge/">
+          <span class="card-index">07</span>
+          <span class="card-title">Badge maker</span>
+          <span class="card-description">Design name badges from templates and participant data.</span>
           <span class="card-arrow" aria-hidden="true">↗</span>
         </a>
       </section>
 
     </main>
   </div>
+  <script src="/home.js?v=recent-searches-1"></script>
 </body>
 </html>
