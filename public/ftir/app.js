@@ -307,6 +307,9 @@ let localSaveTimer = null;
   }
 
   function finiteNumber(value) {
+    if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
+      return null;
+    }
     const number = Number(value);
     return Number.isFinite(number) ? number : null;
   }
@@ -1876,6 +1879,32 @@ let localSaveTimer = null;
     const targetSpectra = options.allSpectra
       ? lastSpectra
       : lastSpectra.filter((spectrum) => spectrum.id === spectrumId);
+    const manualPositions = Array.isArray(options.manualPositions)
+      ? options.manualPositions.map(Number).filter(Number.isFinite)
+      : [];
+    const settings = {
+      smoothingMethod: 'moving_average',
+      smoothingWindow: Math.max(1, Number(detectorSmoothingWindow?.value) || 5),
+      // An unapplied baseline selection must not silently affect detection.
+      // It remains a raw search until the user presses Apply baseline.
+      baselineMethod: forcedBaselineMethod || (baselineIsCurrent ? selectedBaselineMethod : 'none'),
+      baselineLambda: 1000000,
+      baselineAsymmetry: 0.01,
+      baselineSnipWindowCm1: 80,
+      broadProminenceWindowCm1: 800,
+      broadSmoothingWindow: 31,
+      broadMinSeparationCm1: 180,
+      broadBaselineMethod: 'linear',
+      crossEngineMergeCm1: 20,
+      minProminence: Math.max(0, Number(detectorMinProminence?.value) || 0),
+      minSeparationCm1: Math.max(0.1, Number(detectorMinSeparation?.value) || 8),
+      maxPeaks: 300,
+      searchRangeCm1,
+    };
+    if (manualPositions.length && spectrumId) {
+      settings.manualPositionsBySpectrum = { [spectrumId]: manualPositions };
+      settings.manualSnapCm1 = 18;
+    }
     return {
       schemaVersion: '2.0',
       spectra: targetSpectra.map((spectrum) => ({
@@ -1889,25 +1918,7 @@ let localSaveTimer = null;
         xUnit: spectrum.xUnit || 'cm-1',
         points: spectrum.points,
       })),
-      settings: {
-        smoothingMethod: 'moving_average',
-        smoothingWindow: Math.max(1, Number(detectorSmoothingWindow?.value) || 5),
-        // An unapplied baseline selection must not silently affect detection.
-        // It remains a raw search until the user presses Apply baseline.
-        baselineMethod: forcedBaselineMethod || (baselineIsCurrent ? selectedBaselineMethod : 'none'),
-        baselineLambda: 1000000,
-        baselineAsymmetry: 0.01,
-        baselineSnipWindowCm1: 80,
-        broadProminenceWindowCm1: 800,
-        broadSmoothingWindow: 31,
-        broadMinSeparationCm1: 180,
-        broadBaselineMethod: 'linear',
-        crossEngineMergeCm1: 20,
-        minProminence: Math.max(0, Number(detectorMinProminence?.value) || 0),
-        minSeparationCm1: Math.max(0.1, Number(detectorMinSeparation?.value) || 8),
-        maxPeaks: 300,
-        searchRangeCm1,
-      },
+      settings,
     };
   }
 
@@ -2214,16 +2225,114 @@ let localSaveTimer = null;
       return false;
     }
     stripe.x = Number(parsed.toFixed(2));
+    const previousParameters = {
+      height: stripe.height,
+      prominence: stripe.prominence,
+      widthCm1: stripe.widthCm1,
+      fwhmCm1: stripe.fwhmCm1,
+      shape: stripe.shape,
+      confidence: stripe.confidence,
+      intensity: stripe.intensity,
+    };
     // Once moved, this is a user-adjusted observation. Recalculate the
     // available local parameters for the spectrum instead of retaining values
     // measured at the detector's previous position.
-    Object.assign(stripe, estimateManualPeakParameters(stripe.x, stripe.spectrumId));
+    const localEstimate = estimateManualPeakParameters(stripe.x, stripe.spectrumId);
+    Object.assign(stripe, localEstimate);
+    // Some broad/shoulder bands have no local half-height crossing in the
+    // browser estimate. Do not erase usable values while the server refines
+    // the edited peak with the full detector signal.
+    ['height', 'prominence', 'widthCm1', 'fwhmCm1', 'confidence', 'intensity'].forEach((field) => {
+      if (!Number.isFinite(Number(localEstimate[field])) && Number.isFinite(Number(previousParameters[field]))) {
+        stripe[field] = previousParameters[field];
+      }
+    });
+    if ((!localEstimate.shape || localEstimate.shape === 'unknown') && previousParameters.shape) {
+      stripe.shape = previousParameters.shape;
+    }
     stripe.source = 'manual';
+    stripe.manualMeasurementPending = true;
     renderChartFromData(lastData, { skipLegend: true });
     renderStripesTable();
     scheduleLocalSave();
     setStatus(`Peak moved to ${stripe.x.toFixed(2)} cm⁻¹.`);
+    void measureManualPeakOnServer(stripe);
     return true;
+  }
+
+  async function measureManualPeakOnServer(stripe) {
+    const spectrumId = stripe?.spectrumId;
+    if (!spectrumId || !Number.isFinite(Number(stripe.x))) return;
+    const requestedNu = Number(stripe.x);
+    const requestVersion = Number(stripe.manualMeasurementVersion || 0) + 1;
+    stripe.manualMeasurementVersion = requestVersion;
+    stripe.manualMeasurementPending = true;
+    clientLog('peak.manual.measure.start', { spectrumId, requestedNu });
+    try {
+      const { processing } = await requestPeakProcessing({
+        spectrumId,
+        manualPositions: [requestedNu],
+      });
+      if (stripe.manualMeasurementVersion !== requestVersion) return;
+      const measurements = Array.isArray(processing?.manualMeasurements)
+        ? processing.manualMeasurements
+        : [];
+      const measured = measurements.reduce((closest, item) => {
+        const distance = Math.abs(Number(item?.requestedNu) - requestedNu);
+        return !closest || distance < closest.distance ? { item, distance } : closest;
+      }, null)?.item;
+      if (!measured || !Number.isFinite(Number(measured.nu))) {
+        throw new Error('The server returned no measurement for the manual peak.');
+      }
+      // A manual marker is the user's explicit position. The backend may snap
+      // internally to a neighbouring apex to measure width/prominence, but it
+      // must never move the line the user placed on the chart.
+      stripe.x = requestedNu;
+      Object.assign(stripe, {
+        originalNu: measured.originalNu,
+        height: measured.height,
+        prominence: measured.prominence,
+        widthCm1: measured.widthCm1,
+        fwhmCm1: measured.fwhmCm1,
+        shape: measured.shape,
+        direction: measured.direction || 'absorption',
+        confidence: measured.confidence,
+        qualityFlags: Array.isArray(measured.qualityFlags) ? measured.qualityFlags : [],
+        localWindow: measured.localWindow,
+        source: 'manual',
+      });
+      stripe.manualMeasurementPending = false;
+      stripe.manualMeasurementError = null;
+      clientLog('peak.manual.measure.complete', {
+        spectrumId,
+        requestedNu,
+        measuredNu: measured.nu,
+        markerNu: stripe.x,
+        prominence: stripe.prominence,
+        widthCm1: stripe.widthCm1,
+        fwhmCm1: stripe.fwhmCm1,
+        shape: stripe.shape,
+      });
+      renderChartFromData(lastData, { skipLegend: true });
+      renderStripesTable();
+      scheduleLocalSave();
+      setStatus(`Peak parameters measured at ${stripe.x.toFixed(2)} cm⁻¹.`);
+    } catch (error) {
+      // The immediate browser estimate remains useful when the optional server
+      // is offline. The connection message is shown near peak search.
+      clientWarn('peak.manual.measure.unavailable', {
+        spectrumId,
+        requestedNu,
+        name: error.name,
+        message: error.message,
+      });
+      if (stripe.manualMeasurementVersion === requestVersion) {
+        stripe.manualMeasurementPending = false;
+        stripe.manualMeasurementError = error.message || 'The server did not return manual peak parameters.';
+        renderChartFromData(lastData, { skipLegend: true });
+        renderStripesTable();
+      }
+    }
   }
 
   function openStripePositionEditor({ stripe, stripeLabel, stripesLayer, xPosition, chartWidth }) {
@@ -2523,19 +2632,19 @@ let localSaveTimer = null;
         spectrumId,
         nu,
         originalNu: Number.isFinite(Number(stripe.originalNu)) ? Number(stripe.originalNu) : nu,
-        height: Number.isFinite(Number(stripe.height)) ? Number(stripe.height) : null,
-        prominence: Number.isFinite(Number(stripe.prominence)) ? Number(stripe.prominence) : null,
-        widthCm1: Number.isFinite(Number(stripe.widthCm1)) ? Number(stripe.widthCm1) : null,
-        fwhmCm1: Number.isFinite(Number(stripe.fwhmCm1)) ? Number(stripe.fwhmCm1) : null,
+        height: finiteNumber(stripe.height),
+        prominence: finiteNumber(stripe.prominence),
+        widthCm1: finiteNumber(stripe.widthCm1),
+        fwhmCm1: finiteNumber(stripe.fwhmCm1),
         shape: stripe.shape || null,
         qualityFlags: Array.isArray(stripe.qualityFlags)
           ? stripe.qualityFlags.filter((flag) => flag !== 'manual_estimate_fallback')
           : [],
         direction: stripe.direction || 'absorption',
         detectionMethod: stripe.source === 'automatic' ? 'automatic' : 'manual',
-        confidence: Number.isFinite(Number(stripe.confidence))
-          ? Number(stripe.confidence)
-          : Number.isFinite(Number(stripe.intensity)) ? Number(stripe.intensity) / 100 : null,
+        confidence: finiteNumber(stripe.confidence) ?? (finiteNumber(stripe.intensity) !== null
+          ? finiteNumber(stripe.intensity) / 100
+          : null),
       });
     });
     const peakObservations = Array.from(observationsById.values());
@@ -3167,12 +3276,28 @@ let localSaveTimer = null;
       if (stripe.widthCm1 !== undefined || stripe.intensity !== undefined || stripe.shape) {
         const meta = document.createElement('div');
         meta.className = 'peaks-meta';
-        const widthText = Number.isFinite(Number(stripe.widthCm1)) ? `${Number(stripe.widthCm1).toFixed(2)} cm⁻¹` : '—';
-        const fwhmText = Number.isFinite(Number(stripe.fwhmCm1)) ? `${Number(stripe.fwhmCm1).toFixed(2)} cm⁻¹` : '—';
-        const intensityText = Number.isFinite(Number(stripe.intensity)) ? `${stripe.intensity}%` : '—';
-        const prominenceText = Number.isFinite(Number(stripe.prominence)) ? `${Number(stripe.prominence).toFixed(3)}` : '—';
-        meta.textContent = `Width: ${widthText} | FWHM: ${fwhmText} | Prominence: ${prominenceText} | Confidence: ${intensityText}% | Shape: ${stripe.shape || '—'}`;
+        const width = finiteNumber(stripe.widthCm1);
+        const fwhm = finiteNumber(stripe.fwhmCm1);
+        const intensity = finiteNumber(stripe.intensity);
+        const prominence = finiteNumber(stripe.prominence);
+        const widthText = width !== null ? `${width.toFixed(2)} cm⁻¹` : '—';
+        const fwhmText = fwhm !== null ? `${fwhm.toFixed(2)} cm⁻¹` : '—';
+        const intensityText = intensity !== null ? `${intensity}%` : '—';
+        const prominenceText = prominence !== null ? `${prominence.toFixed(3)}` : '—';
+        meta.textContent = `Width: ${widthText} | FWHM: ${fwhmText} | Prominence: ${prominenceText} | Confidence: ${intensityText} | Shape: ${stripe.shape || '—'}`;
         tipCell.appendChild(meta);
+      }
+      if (stripe.manualMeasurementPending) {
+        const measuring = document.createElement('div');
+        measuring.className = 'peaks-meta';
+        measuring.textContent = 'Parameters are being refined by the server…';
+        tipCell.appendChild(measuring);
+      }
+      if (stripe.manualMeasurementError) {
+        const measurementError = document.createElement('div');
+        measurementError.className = 'peaks-quality-warning';
+        measurementError.textContent = `Server measurement unavailable: ${stripe.manualMeasurementError}`;
+        tipCell.appendChild(measurementError);
       }
       if (Array.isArray(stripe.qualityFlags) && stripe.qualityFlags.length) {
         const qualityLabels = {
@@ -3515,7 +3640,9 @@ let localSaveTimer = null;
       .join('; ');
     const nearestPoint = findNearestSpectrumPoint(xVal, spectrumId);
     const calculated = estimateManualPeakParameters(nearestPoint?.x ?? xVal, spectrumId);
-    const peakX = calculated.originalNu ?? nearestPoint?.x ?? xVal;
+    // Keep the manual marker at the selected coordinate. `originalNu` may
+    // describe a nearby apex used only for the parameter calculation.
+    const peakX = Number(xVal.toFixed(2));
     clientLog('peak.manual.add', {
       spectrumId,
       x: peakX,
@@ -3533,7 +3660,7 @@ let localSaveTimer = null;
     // `currentStripes()` is intentionally filtered to the selected spectrum
     // for display. Do not use that filtered array as the replacement for the
     // whole set, otherwise manual insertion removes peaks from other spectra.
-    stripeSets[activeStripeSet] = [...allStripes, {
+    const stripe = {
       id: `stripe-${stripeIdSeq}`,
       peakId,
       spectrumId,
@@ -3543,11 +3670,14 @@ let localSaveTimer = null;
       tip: tipText,
       labelSource: label ? 'peak-db' : 'empty',
       source: 'manual',
+      manualMeasurementPending: true,
       ...calculated,
-    }];
+    };
+    stripeSets[activeStripeSet] = [...allStripes, stripe];
     renderChartFromData(lastData);
     renderStripesTable();
     scheduleLocalSave();
+    void measureManualPeakOnServer(stripe);
   });
 
   copyStripesBtn?.addEventListener('click', () => {
