@@ -341,8 +341,8 @@ h2 {
 }
 .home-footer {
   position: fixed;
-  bottom: -35px;
-  right: -35px;
+  bottom: -130px;
+  right: -130px;
   z-index: 3;
   display: flex;
   margin: 0;
@@ -356,11 +356,14 @@ h2 {
   overflow: hidden;
   border-radius: 50%;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
-  transform: rotate(-120deg);
-  animation: portrait-enter 1.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform: rotate(-35deg);
 }
 
-.home-footer-link:hover {}
+@media (hover: hover) and (pointer: fine) {
+  .home-footer-link:hover {
+    animation: portrait-enter 1.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
 
 .home-footer-link img {
   display: block;
@@ -372,13 +375,11 @@ h2 {
 
 @keyframes portrait-enter {
   from {
-    opacity: 0;
-    transform: translate(120px, 120px) rotate(-35deg);
+    transform: translate(0, 0) rotate(-35deg);
   }
 
   to {
-    opacity: 1;
-    transform: translate(0, 0) rotate(-35deg);
+    transform: translate(-20px, -20px) rotate(-35deg);
   }
 }
 
@@ -432,8 +433,10 @@ h2 {
   }
 
   .home-footer {
-    top: -8px;
-    left: -8px;
+    top: auto;
+    left: auto;
+    right: -8px;
+    bottom: -8px;
   }
 
   .home-footer-link {
