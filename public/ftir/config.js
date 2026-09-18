@@ -3,7 +3,7 @@ window.APP_CONFIG = {
   // Local test: http://127.0.0.1:8787/api/analyze
   //https://ftirllm.nikolaisemenov.com/api/analyze
   // Production: replace with the public HTTPS backend URL.
-  analysisApi: 'http://127.0.0.1:8787/api/analyze',
+  analysisApi: 'https://ftirllm.nikolaisemenov.com/api/analyze',
   footerLinks: {
     site: 'https://nikolaysemenov.ru',
     github: 'https://github.com/ksider/nikolaysemenov.ru/tree/main/ftir',
