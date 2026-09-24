@@ -1,11 +1,20 @@
 (() => {
-  const config = window.APP_CONFIG || {};
+  const config = window.APP_RUNTIME_CONFIG || window.APP_CONFIG || {};
   const translations = config.translations || {};
   const supportedLangs = config.supportedLangs || Object.keys(translations) || ['en'];
   const footerLinks = config.footerLinks || {};
   const chartSettings = config.chart || {};
   const analysisApi = config.analysisApi || '/api/analyze';
   const peakDetectionApi = config.peakDetectionApi || analysisApi.replace(/\/api\/analyze$/, '/api/peaks/detect');
+  const referenceSearchConfig = config.referenceSearch || {};
+  const userProfile = config.userProfile || {};
+  const userAuth = userProfile.auth || {};
+  const userLlm = userProfile.llm || {};
+  const referenceSearchEnabled = Boolean(referenceSearchConfig.enabled && referenceSearchConfig.api);
+  const referenceSearchApi = referenceSearchConfig.api || '';
+  const referenceMetadataApi = referenceSearchApi.replace(/\/api\/v1\/search\/?(?:\?.*)?$/, '/api/v1/metadata/resolve');
+  const referenceSearchTopK = Math.min(Math.max(Number(referenceSearchConfig.topK) || 5, 1), 20);
+  const referenceSearchTimeoutMs = Math.min(Math.max(Number(referenceSearchConfig.timeoutMs) || 30000, 1000), 120000);
   const apiHostname = new URL(analysisApi, window.location.href).hostname;
   const localApi = apiHostname === 'localhost' || apiHostname === '127.0.0.1' || apiHostname === '::1';
   // Disk pages and a local API use wildcard CORS and must not send cookies.
@@ -92,14 +101,40 @@
   const copyStripesBtn = document.getElementById('copyStripes');
   const copyConfirmedPayloadBtn = document.getElementById('copyConfirmedPayload');
   const analyzeConfirmedBtn = document.getElementById('analyzeConfirmed');
+  const searchLocalReferencesBtn = document.getElementById('searchLocalReferences');
   const analysisPromptInput = document.getElementById('analysisPrompt');
   const analysisCard = document.getElementById('analysisCard');
   const analysisStatus = document.getElementById('analysisStatus');
   const analysisResult = document.getElementById('analysisResult');
+  const referenceSearchCard = document.getElementById('referenceSearchCard');
+  const referenceSearchStatus = document.getElementById('referenceSearchStatus');
+  const referenceSearchSpectrum = document.getElementById('referenceSearchSpectrum');
+  const referenceSearchResult = document.getElementById('referenceSearchResult');
+  const referenceSidebarToggleBtn = document.getElementById('referenceSidebarToggle');
   const exportSessionBtn = document.getElementById('exportSession');
   const importSessionBtn = document.getElementById('importSession');
   const importSessionInput = document.getElementById('importSessionInput');
   const clearLocalSessionBtn = document.getElementById('clearLocalSession');
+  const openAppSettingsBtn = document.getElementById('openAppSettings');
+  const appSettingsDialog = document.getElementById('appSettingsDialog');
+  const appSettingsForm = document.getElementById('appSettingsForm');
+  const closeAppSettingsBtn = document.getElementById('closeAppSettings');
+  const importUserSettingsBtn = document.getElementById('importUserSettings');
+  const importUserSettingsInput = document.getElementById('importUserSettingsInput');
+  const exportUserSettingsBtn = document.getElementById('exportUserSettings');
+  const exportUserSettingsWithSecretsBtn = document.getElementById('exportUserSettingsWithSecrets');
+  const resetUserSettingsBtn = document.getElementById('resetUserSettings');
+  const settingsMode = document.getElementById('settingsMode');
+  const settingsAnalysisApi = document.getElementById('settingsAnalysisApi');
+  const settingsPeakApi = document.getElementById('settingsPeakApi');
+  const settingsReferenceApi = document.getElementById('settingsReferenceApi');
+  const settingsApiCredentials = document.getElementById('settingsApiCredentials');
+  const settingsDirectReference = document.getElementById('settingsDirectReference');
+  const settingsLlmProvider = document.getElementById('settingsLlmProvider');
+  const settingsLlmModel = document.getElementById('settingsLlmModel');
+  const settingsLlmApiKey = document.getElementById('settingsLlmApiKey');
+  const settingsAnalysisToken = document.getElementById('settingsAnalysisToken');
+  const settingsReferenceToken = document.getElementById('settingsReferenceToken');
   const selectFilesBtn = document.getElementById('selectFiles');
   const stripeSetBtns = document.querySelectorAll('.stripe-set-btn');
   const peakDb = Array.isArray(window.FTIR_BASE) ? window.FTIR_BASE : [];
@@ -173,7 +208,14 @@ let showPoints = false;
 let panRaf = null;
 let panQueued = null;
 let measurementState = null;
-let analysisData = null;
+  let analysisData = null;
+  // Search results belong to the spectrum that was used as the query. Keeping
+  // them separately prevents a tab switch from showing another spectrum's hit.
+  let referenceSearchesBySpectrum = new Map();
+  let referenceSidebarOpen = false;
+  // Local-only token for the direct diagnostic route. It is intentionally not
+  // saved in config.js, localStorage or the exported session.
+  let localReferenceServiceToken = userAuth.referenceServiceToken || '';
 const LOCAL_SESSION_KEY = 'ftir_merger_local_session_v1';
 const LOCAL_SETTINGS_KEY = 'ftir_merger_settings_v1';
 let localSaveTimer = null;
@@ -183,6 +225,7 @@ let localSaveTimer = null;
     pageOrigin: window.location.origin,
     analysisApi,
     peakDetectionApi,
+    referenceSearch: referenceSearchEnabled ? referenceSearchApi : 'disabled',
     apiCredentials,
     language: currentLang,
     debugLogging: DEBUG_LOGGING,
@@ -214,6 +257,28 @@ let localSaveTimer = null;
     const fallback = (translations.en || {})[key] || key;
     const resolved = typeof val === 'function' ? val(arg) : val;
     return resolved !== undefined ? resolved : fallback;
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function apiRequestHeaders({ includeLlmPreferences = false } = {}) {
+    const headers = { 'content-type': 'application/json' };
+    if (userAuth.analysisAccessToken) headers.authorization = `Bearer ${userAuth.analysisAccessToken}`;
+    // These headers are accepted only when the server is deliberately started
+    // with BYOK_ENABLED=true. They are never written to console logs.
+    if (includeLlmPreferences && userLlm.provider && userLlm.provider !== 'server') {
+      headers['x-ftir-llm-provider'] = userLlm.provider;
+      if (userLlm.model) headers['x-ftir-llm-model'] = userLlm.model;
+      if (userLlm.apiKey) headers['x-ftir-llm-api-key'] = userLlm.apiKey;
+    }
+    return headers;
   }
 
   function applyTranslations() {
@@ -1306,6 +1371,7 @@ let localSaveTimer = null;
       const clamped = clampX(xVal);
       markerActive = true;
       markerX = clamped;
+      const activeSpectrumChanged = Boolean(spectrumId && activeSpectrumId !== spectrumId);
       if (spectrumId) {
         markerSpectrumId = spectrumId;
         activeSpectrumId = spectrumId;
@@ -1335,6 +1401,11 @@ let localSaveTimer = null;
       });
       markerText.attr('x', x(clamped)).text(`x = ${clamped.toFixed(2)}`);
       svg.style('cursor', measurementState ? 'crosshair' : 'col-resize');
+      if (activeSpectrumChanged) {
+        updateSpectrumSelector();
+        updateDetectorControls();
+        renderActiveReferenceSearch();
+      }
       setStatus(`x=${clamped.toFixed(2)}`);
     };
 
@@ -1799,6 +1870,7 @@ let localSaveTimer = null;
     setControlsEnabled(true);
     renderChartFromData(lastData);
     renderStripesTable();
+    renderActiveReferenceSearch();
     scheduleLocalSave();
   }
 
@@ -1844,6 +1916,15 @@ let localSaveTimer = null;
       detectorBaselineSummary.textContent = `${t('detectorBaseline')}: ${hasAppliedBaseline ? selectedMethod.toUpperCase() : t('detectorRawMode')}`;
       detectorBaselineSummary.classList.toggle('is-applied', hasAppliedBaseline);
     }
+    updateReferenceSearchControls();
+  }
+
+  function updateReferenceSearchControls() {
+    if (!searchLocalReferencesBtn) return;
+    searchLocalReferencesBtn.hidden = !referenceSearchEnabled;
+    if (!searchLocalReferencesBtn.dataset.busy) {
+      searchLocalReferencesBtn.disabled = !referenceSearchEnabled || !activeSpectrumId || !lastSpectra.length;
+    }
   }
 
   function setActiveSpectrum(spectrumId) {
@@ -1870,6 +1951,7 @@ let localSaveTimer = null;
     updateSpectrumSelector();
     renderChartFromData(lastData);
     renderStripesTable();
+    renderActiveReferenceSearch();
     scheduleLocalSave();
   }
 
@@ -1975,7 +2057,7 @@ let localSaveTimer = null;
     try {
       response = await fetch(peakDetectionApi, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: apiRequestHeaders(),
         credentials: apiCredentials,
         body: JSON.stringify(payload),
       });
@@ -2706,13 +2788,17 @@ let localSaveTimer = null;
         prominenceChangeThreshold: 0.05,
         widthChangeThreshold: 1,
         userPrompt: analysisPromptInput?.value.trim().slice(0, 2000) || '',
+        clientPreferences: {
+          provider: userLlm.provider || 'server',
+          model: userLlm.model || '',
+        },
       },
     };
   }
 
   function buildSessionSnapshot() {
     return {
-      version: 3,
+      version: 4,
       settings: buildPersistentSettings(),
       files: lastFilesRaw,
       fileName: fileNameInput.value,
@@ -2733,6 +2819,7 @@ let localSaveTimer = null;
       customNames: Object.fromEntries(customNames),
       analysisPrompt: analysisPromptInput?.value || '',
       analysis: analysisData,
+      referenceSearches: Object.fromEntries(referenceSearchesBySpectrum),
       spectra: lastSpectra,
       markerSpectrumId,
       activeSpectrumId,
@@ -2741,6 +2828,18 @@ let localSaveTimer = null;
       stripeIdSeq,
       peaksTableCollapsed,
     };
+  }
+
+  function restoreReferenceSearches(snapshot) {
+    const entries = Object.entries(snapshot || {});
+    entries.forEach(([, entry]) => {
+      const matches = Array.isArray(entry?.body?.matches) ? entry.body.matches : [];
+      matches.forEach((match) => {
+        // A request cannot survive a reload. Permit it to be requested again.
+        if (match?.metadataState === 'loading') delete match.metadataState;
+      });
+    });
+    return new Map(entries);
   }
 
   function buildPersistentSettings() {
@@ -2907,6 +3006,7 @@ let localSaveTimer = null;
     }
     resetWorkspace();
     if (analysisCard) analysisCard.hidden = true;
+    setReferenceSidebarVisible(false);
     setStatus('Local session cleared.');
   }
 
@@ -2915,13 +3015,14 @@ let localSaveTimer = null;
       const raw = localStorage.getItem(LOCAL_SESSION_KEY);
       if (!raw) return;
       const session = JSON.parse(raw);
-      if (!session || ![1, 2, 3].includes(session.version) || !Array.isArray(session.files) || !session.files.length) return;
+      if (!session || ![1, 2, 3, 4].includes(session.version) || !Array.isArray(session.files) || !session.files.length) return;
       if (session.settings) applyPersistentSettings(session.settings);
       lastFilesRaw = session.files.map((file) => ({ name: file.name, content: file.content }));
       spectrumRoles = new Map((session.spectra || [])
         .filter((spectrum) => spectrum?.id)
         .map((spectrum) => [String(spectrum.id), spectrum.role || 'unknown']));
       stripeSets = session.stripeSets || stripeSets;
+      referenceSearchesBySpectrum = restoreReferenceSearches(session.referenceSearches);
       activeStripeSet = session.activeStripeSet || activeStripeSet;
       stripeIdSeq = Number(session.stripeIdSeq) || 0;
       markerActive = Boolean(session.markerActive ?? session.settings?.peaks?.markerActive);
@@ -2954,6 +3055,8 @@ let localSaveTimer = null;
       }
       if (analysisPromptInput) analysisPromptInput.value = String(session.analysisPrompt || '').slice(0, 2000);
       analysisData = session.analysis || null;
+      renderActiveReferenceSearch();
+      if (activeSpectrumId) void resolveStrongReferenceMetadata(activeSpectrumId);
       if (analysisData && analysisCard && analysisResult) {
         analysisCard.hidden = false;
         analysisStatus.textContent = 'Restored';
@@ -3126,6 +3229,343 @@ let localSaveTimer = null;
     console.info('[FTIR analysis] suggestions.applied', { candidates: candidates.length, confirmed: confirmed.length, applied });
   }
 
+  function selectedReferenceSignalType(spectrum) {
+    const applied = detectorAppliedSettings.get(spectrum?.id);
+    const fromProcessing = applied?.signalType;
+    const fromControl = detectorSignalType?.value;
+    const configured = referenceSearchConfig.signalType;
+    return [fromProcessing, fromControl, spectrum?.signalType, configured]
+      .find((value) => value === 'absorbance' || value === 'transmittance') || 'transmittance';
+  }
+
+  const REFERENCE_STRONG_MATCH_SCORE = 0.6;
+
+  function referenceSpectrumName(spectrum) {
+    if (!spectrum) return '';
+    return customNames.get(spectrumColumn(spectrum.id)) || spectrum.name || spectrum.id;
+  }
+
+  function referenceScoreLabel(value) {
+    const score = Number(value);
+    if (!Number.isFinite(score)) return '—';
+    return `${(score * 100).toFixed(1)}%`;
+  }
+
+  function formatChemicalFormula(value) {
+    return escapeHtml(value).replace(/(\d+)/g, '<sub>$1</sub>');
+  }
+
+  function renderReferenceIdentity(match, matchIndex, autoResolve = false) {
+    const metadata = match.metadata;
+    if (metadata?.found) {
+      const name = metadata.title || metadata.iupacName || t('referenceNameUnavailable');
+      const details = [
+        metadata.molecularFormula ? `${escapeHtml(t('referenceFormula'))}: <span class="chemical-formula">${formatChemicalFormula(metadata.molecularFormula)}</span>` : '',
+        metadata.cid ? `CID: ${escapeHtml(metadata.cid)}` : '',
+      ].filter(Boolean).join(' · ');
+      const iupac = metadata.iupacName && metadata.iupacName !== name
+        ? `<div class="reference-metadata-iupac">${escapeHtml(metadata.iupacName)}</div>`
+        : '';
+      return `<div class="reference-metadata"><strong>${escapeHtml(name)}</strong>${details ? `<span>${details}</span>` : ''}${iupac}</div>`;
+    }
+    if (match.metadataState === 'loading') {
+      return `<div class="reference-match-meta reference-match-smiles">${escapeHtml(t('referenceResolvingName'))}</div>`;
+    }
+    if (match.metadataState === 'not_found') {
+      return `<div class="reference-match-meta reference-match-smiles">SMILES: ${escapeHtml(match.smiles || '')}</div><div class="reference-metadata reference-metadata--muted">${escapeHtml(t('referenceNameNotFound'))}</div>`;
+    }
+    if (match.metadataState === 'error') {
+      return `<button type="button" class="reference-match-meta reference-match-smiles reference-smiles-resolve" data-reference-resolve="${matchIndex}" title="${escapeHtml(t('referenceFindName'))}">SMILES: ${escapeHtml(match.smiles || '')}</button><div class="reference-metadata reference-metadata--muted">${escapeHtml(t('referenceNameUnavailable'))}</div>`;
+    }
+    if (!match.smiles) return '';
+    if (autoResolve) return `<div class="reference-match-meta reference-match-smiles">${escapeHtml(t('referenceResolvingName'))}</div>`;
+    return `<button type="button" class="reference-match-meta reference-match-smiles reference-smiles-resolve" data-reference-resolve="${matchIndex}" title="${escapeHtml(t('referenceFindName'))}">SMILES: ${escapeHtml(match.smiles)}</button>`;
+  }
+
+  function renderReferenceMatch(match, index, matchIndex, autoResolve = false) {
+    const identifier = match.id || `match-${index + 1}`;
+    const smiles = typeof match.smiles === 'string' ? match.smiles.trim() : '';
+    const pubChemUrl = smiles
+      ? `https://pubchem.ncbi.nlm.nih.gov/#query=${encodeURIComponent(smiles)}`
+      : '';
+    const structure = smiles
+      ? `<div class="reference-structure" data-smiles-structure data-smiles="${escapeHtml(smiles)}"><svg aria-label="${escapeHtml(`Chemical structure for ${identifier}`)}" role="img"></svg></div>`
+      : `<div class="reference-structure"><span class="reference-structure-fallback">${escapeHtml(t('referenceStructureUnavailable'))}</span></div>`;
+    return `<article class="reference-match">
+      <div class="reference-match-head"><span class="analysis-rank">${index + 1}</span><strong>${escapeHtml(identifier)}</strong><span class="reference-match-score">${escapeHtml(t('referenceScore'))}: ${escapeHtml(referenceScoreLabel(match.score))}</span></div>
+      <div class="reference-match-body">
+        <div>
+          ${renderReferenceIdentity(match, matchIndex, autoResolve)}
+          ${pubChemUrl ? `<div class="reference-match-links"><a href="${escapeHtml(pubChemUrl)}" target="_blank" rel="noopener">${escapeHtml(t('referenceOpenPubChem'))}</a></div>` : ''}
+        </div>
+        ${structure}
+      </div>
+    </article>`;
+  }
+
+  function drawReferenceStructures() {
+    if (!referenceSearchResult) return;
+    const structures = referenceSearchResult.querySelectorAll('[data-smiles-structure]');
+    structures.forEach((container) => {
+      const smiles = container.dataset.smiles || '';
+      const target = container.querySelector('svg');
+      const fallback = () => {
+        container.replaceChildren();
+        const message = document.createElement('span');
+        message.className = 'reference-structure-fallback';
+        message.textContent = t('referenceStructureUnavailable');
+        container.appendChild(message);
+      };
+      if (!smiles || !target || !window.SmilesDrawer?.parse || !window.SmilesDrawer?.SvgDrawer) {
+        fallback();
+        return;
+      }
+      try {
+        window.SmilesDrawer.parse(smiles, (tree) => {
+          try {
+            const drawer = new window.SmilesDrawer.SvgDrawer({ width: 180, height: 124, padding: 8, bondLength: 18 });
+            drawer.draw(tree, target, 'light', false);
+          } catch (error) {
+            clientWarn('reference.structure.draw_failed', { name: error.name, message: error.message });
+            fallback();
+          }
+        }, fallback);
+      } catch (error) {
+        clientWarn('reference.structure.parse_failed', { name: error.name, message: error.message });
+        fallback();
+      }
+    });
+  }
+
+  function renderReferenceSearchResponse(body, spectrum, lowerMatchesOpen = false) {
+    const matches = Array.isArray(body?.matches) ? body.matches : [];
+    if (!matches.length) return `<p class="analysis-empty">${escapeHtml(t('referenceNoMatches'))}</p>`;
+    const indexedMatches = matches.map((match, matchIndex) => ({ match, matchIndex }));
+    const strong = indexedMatches.filter(({ match }) => Number(match.score) >= REFERENCE_STRONG_MATCH_SCORE);
+    const lower = indexedMatches.filter(({ match }) => Number(match.score) < REFERENCE_STRONG_MATCH_SCORE);
+    const strongItems = strong.map(({ match, matchIndex }, index) => renderReferenceMatch(match, index, matchIndex, true)).join('');
+    const lowerItems = lower.map(({ match, matchIndex }, index) => renderReferenceMatch(match, strong.length + index, matchIndex)).join('');
+    const license = matches.find((match) => typeof match?.license === 'string' && match.license)?.license || '';
+    const licenseUrl = license === 'CDLA-Permissive-2.0' ? 'https://cdla.dev/permissive-2-0/' : '';
+    return `<div class="reference-search-layout">
+      <section class="reference-strong-matches">
+        <div class="reference-result-heading"><h4>${escapeHtml(t('referenceStrongMatches'))}</h4><span>${escapeHtml(t('referenceThresholdLabel'))}</span></div>
+        ${strongItems ? `<div class="reference-match-list">${strongItems}</div>` : `<p class="analysis-empty">${escapeHtml(t('referenceNoStrongMatches'))}</p>`}
+      </section>
+      <details class="reference-low-sidebar"${lowerMatchesOpen ? ' open' : ''}>
+        <summary>${escapeHtml(t('referenceOtherMatches'))} (${lower.length})</summary>
+        <div class="reference-low-content">${lowerItems || `<p class="analysis-empty">${escapeHtml(t('referenceNoLowerMatches'))}</p>`}</div>
+      </details>
+    </div>
+    ${license ? `<p class="reference-license">${escapeHtml(t('referenceLicense'))}: ${licenseUrl ? `<a href="${licenseUrl}" target="_blank" rel="noopener">${escapeHtml(license)}</a>` : escapeHtml(license)}</p>` : ''}`;
+  }
+
+  function setReferenceSidebarOpen(open) {
+    referenceSidebarOpen = Boolean(open);
+    referenceSearchCard?.classList.toggle('is-open', referenceSidebarOpen);
+    referenceSidebarToggleBtn?.classList.toggle('is-open', referenceSidebarOpen);
+    if (referenceSidebarToggleBtn) {
+      referenceSidebarToggleBtn.setAttribute('aria-expanded', String(referenceSidebarOpen));
+      referenceSidebarToggleBtn.title = referenceSidebarOpen ? t('referenceCloseResults') : t('referenceOpenResults');
+      referenceSidebarToggleBtn.setAttribute('aria-label', referenceSidebarToggleBtn.title);
+      const icon = referenceSidebarToggleBtn.querySelector('.material-symbols-outlined');
+      if (icon) icon.textContent = referenceSidebarOpen ? 'chevron_right' : 'chevron_left';
+    }
+  }
+
+  function setReferenceSidebarVisible(visible) {
+    if (referenceSearchCard) referenceSearchCard.hidden = !visible;
+    if (referenceSidebarToggleBtn) referenceSidebarToggleBtn.hidden = !visible;
+    if (!visible) setReferenceSidebarOpen(false);
+  }
+
+  async function resolveReferenceMetadata(spectrumId, matchIndex) {
+    const entry = referenceSearchesBySpectrum.get(spectrumId);
+    const matches = Array.isArray(entry?.body?.matches) ? entry.body.matches : [];
+    const match = matches[matchIndex];
+    if (!match?.smiles || match.metadata || match.metadataState === 'loading') return;
+    const keepSidebarOpen = referenceSidebarOpen;
+    match.metadataState = 'loading';
+    delete match.metadataError;
+    if (activeSpectrumId === spectrumId) {
+      renderActiveReferenceSearch();
+      if (keepSidebarOpen) setReferenceSidebarOpen(true);
+    }
+    try {
+      const response = await fetch(referenceMetadataApi, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-service-token': localReferenceServiceToken },
+        credentials: 'omit',
+        body: JSON.stringify({ smiles: match.smiles }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.detail || body.error || `Metadata request failed (${response.status})`);
+      match.metadata = body.metadata || { found: false };
+      match.metadataState = match.metadata.found ? 'ready' : 'not_found';
+      clientLog('reference.metadata.complete', {
+        spectrumId,
+        matchId: match.id,
+        found: Boolean(match.metadata.found),
+        cache: match.metadata.cache || null,
+      });
+    } catch (error) {
+      match.metadataState = 'error';
+      match.metadataError = error.message || 'Metadata unavailable';
+      clientError('reference.metadata.error', {
+        url: referenceMetadataApi,
+        spectrumId,
+        matchId: match.id,
+        name: error.name,
+        message: error.message,
+      });
+    }
+    if (activeSpectrumId === spectrumId) {
+      renderActiveReferenceSearch();
+      if (keepSidebarOpen) setReferenceSidebarOpen(true);
+    }
+    scheduleLocalSave();
+  }
+
+  async function resolveStrongReferenceMetadata(spectrumId) {
+    const entry = referenceSearchesBySpectrum.get(spectrumId);
+    const matches = Array.isArray(entry?.body?.matches) ? entry.body.matches : [];
+    // Resolve serially: a query normally has only 1–5 strong candidates, and
+    // this keeps the public PubChem service from receiving a burst of requests.
+    for (let index = 0; index < matches.length; index += 1) {
+      if (Number(matches[index].score) >= REFERENCE_STRONG_MATCH_SCORE) {
+        await resolveReferenceMetadata(spectrumId, index);
+      }
+    }
+  }
+
+  function bindReferenceMetadataButtons() {
+    if (!referenceSearchResult) return;
+    referenceSearchResult.querySelectorAll('[data-reference-resolve]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const matchIndex = Number(button.dataset.referenceResolve);
+        if (Number.isInteger(matchIndex) && activeSpectrumId) void resolveReferenceMetadata(activeSpectrumId, matchIndex);
+      });
+    });
+  }
+
+  function bindReferenceLowerMatchesState(entry) {
+    const details = referenceSearchResult?.querySelector('.reference-low-sidebar');
+    if (!details || !entry) return;
+    details.addEventListener('toggle', () => {
+      entry.lowerMatchesOpen = details.open;
+      scheduleLocalSave();
+    });
+  }
+
+  function renderActiveReferenceSearch() {
+    const spectrum = lastSpectra.find((item) => item.id === activeSpectrumId);
+    const entry = spectrum ? referenceSearchesBySpectrum.get(spectrum.id) : null;
+    if (!referenceSearchCard || !referenceSearchResult) return;
+    if (!spectrum || !entry) {
+      setReferenceSidebarVisible(false);
+      return;
+    }
+    setReferenceSidebarVisible(true);
+    setReferenceSidebarOpen(referenceSidebarOpen);
+    if (referenceSearchSpectrum) referenceSearchSpectrum.textContent = referenceSpectrumName(spectrum);
+    if (referenceSearchStatus) referenceSearchStatus.textContent = entry.error ? t('referenceUnavailable') : t('referenceReady');
+    if (entry.error) {
+      referenceSearchResult.textContent = entry.error;
+      return;
+    }
+    const sidebarScrollTop = referenceSearchCard.scrollTop;
+    const existingLowerMatches = referenceSearchResult.querySelector('.reference-low-sidebar');
+    const lowerContentScrollTop = existingLowerMatches?.querySelector('.reference-low-content')?.scrollTop || 0;
+    if (existingLowerMatches) entry.lowerMatchesOpen = existingLowerMatches.open;
+    referenceSearchResult.innerHTML = renderReferenceSearchResponse(entry.body, spectrum, Boolean(entry.lowerMatchesOpen));
+    drawReferenceStructures();
+    bindReferenceMetadataButtons();
+    bindReferenceLowerMatchesState(entry);
+    const restoreReferenceScroll = () => {
+      referenceSearchCard.scrollTop = sidebarScrollTop;
+      const lowerContent = referenceSearchResult.querySelector('.reference-low-content');
+      if (lowerContent) lowerContent.scrollTop = lowerContentScrollTop;
+    };
+    restoreReferenceScroll();
+    requestAnimationFrame(restoreReferenceScroll);
+  }
+
+  async function searchLocalReferences() {
+    const spectrum = lastSpectra.find((item) => item.id === activeSpectrumId);
+    if (!spectrum?.points?.length) {
+      setStatus(t('referenceNoSpectrum'), true);
+      return;
+    }
+    if (!localReferenceServiceToken) {
+      localReferenceServiceToken = window.prompt(t('referenceTokenPrompt'))?.trim() || '';
+      if (localReferenceServiceToken && window.FTIR_SETTINGS?.update) {
+        window.FTIR_SETTINGS.update({ auth: { referenceServiceToken: localReferenceServiceToken } });
+      }
+    }
+    if (!localReferenceServiceToken) {
+      setStatus(t('referenceTokenRequired'), true);
+      return;
+    }
+    setReferenceSidebarVisible(true);
+    setReferenceSidebarOpen(true);
+    if (referenceSearchSpectrum) referenceSearchSpectrum.textContent = referenceSpectrumName(spectrum);
+    if (referenceSearchStatus) referenceSearchStatus.textContent = t('referenceSearching');
+    if (referenceSearchResult) referenceSearchResult.textContent = '';
+    if (searchLocalReferencesBtn) {
+      searchLocalReferencesBtn.dataset.busy = 'true';
+      searchLocalReferencesBtn.disabled = true;
+    }
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), referenceSearchTimeoutMs);
+    const signalType = selectedReferenceSignalType(spectrum);
+    const payload = { points: spectrum.points, signalType, topK: referenceSearchTopK };
+    const startedAt = performance.now();
+    clientLog('reference.search.start', {
+      url: referenceSearchApi,
+      spectrumId: spectrum.id,
+      points: spectrum.points.length,
+      signalType,
+      topK: referenceSearchTopK,
+    });
+    try {
+      const response = await fetch(referenceSearchApi, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-service-token': localReferenceServiceToken },
+        credentials: 'omit',
+        signal: controller.signal,
+        body: JSON.stringify(payload),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (response.status === 401) localReferenceServiceToken = '';
+        throw new Error(body.detail || body.error || `Reference search failed (${response.status})`);
+      }
+      referenceSearchesBySpectrum.set(spectrum.id, { body, fetchedAt: new Date().toISOString() });
+      renderActiveReferenceSearch();
+      void resolveStrongReferenceMetadata(spectrum.id);
+      clientLog('reference.search.complete', {
+        spectrumId: spectrum.id,
+        matches: Array.isArray(body.matches) ? body.matches.length : 0,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+      setStatus(t('referenceReady'));
+    } catch (error) {
+      const message = error?.name === 'AbortError' ? `Reference search timed out after ${referenceSearchTimeoutMs / 1000}s` : error.message;
+      referenceSearchesBySpectrum.set(spectrum.id, { error: message || t('referenceUnavailable'), fetchedAt: new Date().toISOString() });
+      renderActiveReferenceSearch();
+      clientError('reference.search.error', { url: referenceSearchApi, name: error.name, message });
+      setStatus(t('referenceUnavailable'), true);
+    } finally {
+      window.clearTimeout(timeout);
+      if (searchLocalReferencesBtn) {
+        delete searchLocalReferencesBtn.dataset.busy;
+        updateReferenceSearchControls();
+      }
+    }
+  }
+
   async function analyzeConfirmedPeaks() {
     const payload = buildConfirmedPeaksPayload();
     if (!payload.confirmedPeakIds.length) {
@@ -3147,7 +3587,7 @@ let localSaveTimer = null;
       const startedAt = performance.now();
       const response = await fetch(analysisApi, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: apiRequestHeaders({ includeLlmPreferences: true }),
         credentials: apiCredentials,
         body: JSON.stringify(payload),
       });
@@ -3158,7 +3598,9 @@ let localSaveTimer = null;
       analysisData = body.result || body;
       applyAnalysisSuggestions(analysisData);
       if (analysisResult) analysisResult.innerHTML = renderAnalysisReport(analysisData);
-      if (stripeSets.confirmed?.length) setActiveStripeSet('confirmed');
+      // Analysis must not change the user's current chart context. In
+      // particular, switching Candidates → Confirmed forces a redraw and can
+      // make an auto-scaled view look as if it has jumped.
       renderStripesTable();
       scheduleLocalSave();
       setStatus('Confirmed peaks analyzed.');
@@ -3416,10 +3858,131 @@ let localSaveTimer = null;
     updateDetectorControls();
   }
 
+  function currentUserProfile() {
+    return window.FTIR_SETTINGS?.get?.() || userProfile;
+  }
+
+  function populateAppSettings(profile = currentUserProfile()) {
+    if (!profile) return;
+    if (settingsMode) settingsMode.value = profile.mode || 'development';
+    if (settingsAnalysisApi) settingsAnalysisApi.value = profile.connections?.analysisApi || '';
+    if (settingsPeakApi) settingsPeakApi.value = profile.connections?.peakDetectionApi || '';
+    if (settingsReferenceApi) settingsReferenceApi.value = profile.connections?.referenceSearchApi || '';
+    if (settingsApiCredentials) settingsApiCredentials.value = profile.connections?.apiCredentials === 'include' ? 'include' : 'omit';
+    if (settingsDirectReference) settingsDirectReference.checked = Boolean(profile.features?.directReferenceSearch);
+    if (settingsLlmProvider) settingsLlmProvider.value = profile.llm?.provider || 'server';
+    if (settingsLlmModel) settingsLlmModel.value = profile.llm?.model || '';
+    if (settingsLlmApiKey) settingsLlmApiKey.value = profile.llm?.apiKey || '';
+    if (settingsAnalysisToken) settingsAnalysisToken.value = profile.auth?.analysisAccessToken || '';
+    if (settingsReferenceToken) settingsReferenceToken.value = profile.auth?.referenceServiceToken || '';
+  }
+
+  function profileFromSettingsForm() {
+    const current = currentUserProfile();
+    return {
+      ...current,
+      mode: settingsMode?.value || current.mode,
+      connections: {
+        ...current.connections,
+        analysisApi: settingsAnalysisApi?.value.trim() || '',
+        peakDetectionApi: settingsPeakApi?.value.trim() || '',
+        referenceSearchApi: settingsReferenceApi?.value.trim() || '',
+        apiCredentials: settingsApiCredentials?.value === 'include' ? 'include' : 'omit',
+      },
+      llm: {
+        ...current.llm,
+        provider: settingsLlmProvider?.value || 'server',
+        model: settingsLlmModel?.value.trim() || '',
+        apiKey: settingsLlmApiKey?.value.trim() || '',
+      },
+      auth: {
+        ...current.auth,
+        analysisAccessToken: settingsAnalysisToken?.value.trim() || '',
+        referenceServiceToken: settingsReferenceToken?.value.trim() || '',
+      },
+      features: {
+        ...current.features,
+        directReferenceSearch: Boolean(settingsDirectReference?.checked),
+      },
+    };
+  }
+
+  function downloadSettingsFile(settingsDocument, filename) {
+    const blob = new Blob([JSON.stringify(settingsDocument, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function openAppSettings() {
+    if (!appSettingsDialog) return;
+    populateAppSettings();
+    appSettingsDialog.showModal();
+  }
+
+  async function exportUserSettings(includeSecrets) {
+    try {
+      const password = includeSecrets ? window.prompt(t('settingsExportPassword')) : '';
+      if (includeSecrets && !password) return;
+      const document = await window.FTIR_SETTINGS.makeExport(includeSecrets, password);
+      downloadSettingsFile(document, includeSecrets ? 'ftir-settings-encrypted.json' : 'ftir-settings.json');
+    } catch (error) {
+      setStatus(error.message || 'Settings export failed.', true);
+    }
+  }
+
+  async function importUserSettings(file) {
+    if (!file) return;
+    try {
+      const document = JSON.parse(await file.text());
+      const password = document?.kind === 'ftir-user-settings-encrypted'
+        ? window.prompt(t('settingsImportPassword'))
+        : '';
+      if (document?.kind === 'ftir-user-settings-encrypted' && !password) return;
+      window.FTIR_SETTINGS.importDocument(document, password);
+      setStatus(t('settingsImported'));
+      window.setTimeout(() => window.location.reload(), 250);
+    } catch (error) {
+      setStatus(error.message || 'Settings import failed.', true);
+    } finally {
+      if (importUserSettingsInput) importUserSettingsInput.value = '';
+    }
+  }
+
   refreshBtn.addEventListener('click', () => {
     if (lastData) {
       renderChartFromData(lastData);
     }
+  });
+
+  openAppSettingsBtn?.addEventListener('click', openAppSettings);
+  closeAppSettingsBtn?.addEventListener('click', () => appSettingsDialog?.close());
+  appSettingsForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    try {
+      window.FTIR_SETTINGS.save(profileFromSettingsForm());
+      setStatus(t('settingsSaved'));
+      appSettingsDialog?.close();
+      window.setTimeout(() => window.location.reload(), 250);
+    } catch (error) {
+      setStatus(error.message || 'Settings save failed.', true);
+    }
+  });
+  exportUserSettingsBtn?.addEventListener('click', () => { void exportUserSettings(false); });
+  exportUserSettingsWithSecretsBtn?.addEventListener('click', () => { void exportUserSettings(true); });
+  importUserSettingsBtn?.addEventListener('click', () => importUserSettingsInput?.click());
+  importUserSettingsInput?.addEventListener('change', () => { void importUserSettings(importUserSettingsInput.files?.[0]); });
+  resetUserSettingsBtn?.addEventListener('click', () => {
+    if (!window.confirm('Reset this browser profile? Imported service URLs and all local tokens will be removed.')) return;
+    window.FTIR_SETTINGS.reset();
+    setStatus(t('settingsSaved'));
+    appSettingsDialog?.close();
+    window.setTimeout(() => window.location.reload(), 250);
   });
 
   spectrumSettingsForm?.addEventListener('submit', (event) => {
@@ -3756,6 +4319,8 @@ let localSaveTimer = null;
   });
 
   analyzeConfirmedBtn?.addEventListener('click', analyzeConfirmedPeaks);
+  searchLocalReferencesBtn?.addEventListener('click', searchLocalReferences);
+  referenceSidebarToggleBtn?.addEventListener('click', () => setReferenceSidebarOpen(!referenceSidebarOpen));
   clearLocalSessionBtn?.addEventListener('click', clearLocalSession);
 
   const copyCurrentSvg = () => {
@@ -3848,6 +4413,7 @@ let localSaveTimer = null;
         .filter((spectrum) => spectrum?.id)
         .map((spectrum) => [String(spectrum.id), spectrum.role || 'unknown']));
       stripeSets = session.stripeSets || stripeSets;
+      referenceSearchesBySpectrum = restoreReferenceSearches(session.referenceSearches);
       analysisData = session.analysis || null;
       if (analysisPromptInput) analysisPromptInput.value = String(session.analysisPrompt || '').slice(0, 2000);
       activeStripeSet = session.activeStripeSet || activeStripeSet;
@@ -3884,6 +4450,8 @@ let localSaveTimer = null;
         analysisStatus.textContent = 'Restored';
         analysisResult.innerHTML = renderAnalysisReport(analysisData);
       }
+      renderActiveReferenceSearch();
+      if (activeSpectrumId) void resolveStrongReferenceMetadata(activeSpectrumId);
       scheduleLocalSave();
     } catch (err) {
       console.error(err);
@@ -3981,6 +4549,7 @@ let localSaveTimer = null;
         payloadFiles.push({ name: f.name, content });
       }
       lastFilesRaw = payloadFiles;
+      referenceSearchesBySpectrum = new Map();
       const downloadName = fileNameInput.value.trim() || 'merged.csv';
       setStatus(`${t('statusSending')} ${payloadFiles.length} files...`);
       processFiles(payloadFiles, { fileName: downloadName, markerSpectrumId: null });
@@ -4069,6 +4638,8 @@ let localSaveTimer = null;
     detectorProcessedBySpectrum = new Map();
     detectorAppliedSettings = new Map();
     analysisData = null;
+    referenceSearchesBySpectrum = new Map();
+    setReferenceSidebarVisible(false);
     activeStripeSet = 'candidates';
     peaksTableCollapsed = false;
     applyPeaksTableState(false);
@@ -4102,6 +4673,7 @@ let localSaveTimer = null;
     removedSpectrumIds.forEach((spectrumId) => {
       detectorProcessedBySpectrum.delete(spectrumId);
       detectorAppliedSettings.delete(spectrumId);
+      referenceSearchesBySpectrum.delete(spectrumId);
     });
     Object.keys(stripeSets).forEach((setId) => {
       stripeSets[setId] = (stripeSets[setId] || []).filter((stripe) => !removedSpectrumIds.has(stripe.spectrumId));
@@ -4137,6 +4709,7 @@ let localSaveTimer = null;
     updateSpectrumSelector();
     renderChartFromData(lastData);
     renderStripesTable();
+    renderActiveReferenceSearch();
     scheduleLocalSave();
   }
   restoreLocalSettings();
