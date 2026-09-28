@@ -138,8 +138,8 @@ h2 {
 }
 
 .tool-card-search {
-  grid-column: 1 / -1;
-  min-height: 300px;
+  grid-column: span 3;
+  min-height: 260px;
   background: #dce9da;
 }
 
@@ -148,7 +148,8 @@ h2 {
   min-height: 260px;
 }
 
-.tool-card-primary.tool-card-search {
+.tool-card-primary.tool-card-ftir,
+.tool-card-primary.tool-card-lib {
   grid-column: 1 / -1;
   min-height: 300px;
 }
@@ -173,18 +174,30 @@ h2 {
 }
 
 .tool-card-pdfcraft {
+  grid-column: 1 / span 3;
   background: #f0dfbd;
 }
 
+.tool-card-badge,
+.tool-card-pdfcraft,
+.tool-card-delhi {
+  min-height: 0;
+}
+
 .tool-card-badge {
-  align-self: start;
   background: #ead9ed;
 }
 
 .tool-card-planer {
+  grid-column: 4 / -1;
+  grid-row: span 3;
   min-height: 0;
   aspect-ratio: 1;
   background: #dce4d5;
+}
+
+.tool-card-delhi {
+  grid-column: 1 / span 3;
 }
 
 .tool-card-ftir {
@@ -472,6 +485,10 @@ h2 {
 
   .tool-card-tertiary {
     min-height: 155px;
+  }
+
+  .tool-card-planer {
+    grid-row: auto;
   }
 
   .card-recent {
