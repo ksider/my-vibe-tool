@@ -401,11 +401,10 @@ h2 {
   display: none !important;
 }
 .home-footer {
-  position: fixed;
-  bottom: -130px;
-  right: -130px;
-  z-index: 3;
   display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
   margin: 0;
   padding: 0;
   border: 0;
@@ -413,35 +412,20 @@ h2 {
 .home-footer-link {
   display: block;
   width: 250px;
-  height: 250px;
-  overflow: hidden;
-  border-radius: 50%;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  transform: rotate(-35deg);
+  max-width: 100%;
+  transition: transform 0.2s ease;
 }
 
 @media (hover: hover) and (pointer: fine) {
   .home-footer-link:hover {
-    animation: portrait-enter 1.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+    transform: translateY(-4px);
   }
 }
 
 .home-footer-link img {
   display: block;
   width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center top;
-}
-
-@keyframes portrait-enter {
-  from {
-    transform: translate(0, 0) rotate(-35deg);
-  }
-
-  to {
-    transform: translate(-20px, -20px) rotate(-35deg);
-  }
+  height: auto;
 }
 
 @media (max-width: 780px) {
@@ -497,15 +481,7 @@ h2 {
     margin-top: 18px;
   }
 
-  .home-footer {
-    top: auto;
-    left: auto;
-    right: -8px;
-    bottom: -8px;
-  }
-
   .home-footer-link {
-    width: 76px;
-    height: 76px;
+    width: 180px;
   }
 }
