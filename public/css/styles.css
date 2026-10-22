@@ -190,7 +190,7 @@ h2 {
 
 .tool-card-planer {
   grid-column: 4 / -1;
-  grid-row: span 3;
+  grid-row: span 4;
   min-height: 0;
   aspect-ratio: 1;
   background: #dce4d5;
@@ -198,6 +198,11 @@ h2 {
 
 .tool-card-delhi {
   grid-column: 1 / span 3;
+}
+
+.tool-card-job-tracker {
+  grid-column: 1 / span 3;
+  background: #dce6ee;
 }
 
 .tool-card-ftir {
